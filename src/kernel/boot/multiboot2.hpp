@@ -21,6 +21,8 @@ namespace kernel::boot::multiboot2
 		BasicMeminfo = 4,
 		MemoryMap = 6,
 		Framebuffer = 8,
+		AcpiOld = 14,
+		AcpiNew = 15,
 	};
 
 	struct [[gnu::packed]] Tag
@@ -64,6 +66,8 @@ namespace kernel::boot::multiboot2
 		size_t memory_map_entry_count() const noexcept;
 		const MemoryMapEntry* memory_map_entries() const noexcept;
 		uint32_t memory_map_entry_size() const noexcept;
+
+		uint64_t acpi_rsdp_phys() const noexcept;
 
 	private:
 		const uint8_t* base_;

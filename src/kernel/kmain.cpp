@@ -8,12 +8,17 @@
 
 #include "kernel/arch/x86_64/cpu.hpp"
 #include "kernel/arch/x86_64/idt.hpp"
+#include "kernel/arch/x86_64/interrupts.hpp"
+#include "kernel/arch/x86_64/apic/ioapic.hpp"
+#include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/pic.hpp"
 
 #include "kernel/time/time.hpp"
 
+#include "kernel/acpi/acpi.hpp"
 #include "kernel/boot/multiboot2.hpp"
 #include "kernel/mm/pmm.hpp"
+#include "kernel/mm/ioremap.hpp"
 #include "kernel/mm/vmm.hpp"
 #include "kernel/mm/heap.hpp"
 
@@ -30,6 +35,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 	kernel::log::set_sink(multi_sink);
 
 	kernel::arch::x86_64::idt::init();
+	kernel::arch::x86_64::enable_nx();
 
 	kernel::log::write_line("Hello, world!");
 
@@ -38,6 +44,8 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 	kernel::log::write(" info=");
 	kernel::log::write_u64_hex(multiboot_info_addr);
 	kernel::log::write("\n", 1);
+
+	bool apic_ok = false;
 
 	if (multiboot_magic == kernel::boot::multiboot2::bootloader_magic)
 	{
@@ -73,6 +81,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 		kernel::mm::vmm::init();
 		kernel::mm::vmm::map_physmap_all(reader);
 		kernel::mm::pmm::set_alloc_limit(~0ull);
+		kernel::mm::ioremap::init();
 		kernel::mm::heap::init();
 
 		constexpr uint64_t test_virt = 0xFFFFFE0000100000ull;
@@ -119,9 +128,33 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 		kernel::log::write("\n", 1);
 		delete p;
 		kernel::log::write_line("delete ok");
+
+		if (kernel::acpi::init(reader))
+		{
+			if (const auto* madt = kernel::acpi::madt())
+			{
+				kernel::arch::x86_64::apic::lapic::init(madt->lapic_phys);
+				kernel::arch::x86_64::apic::ioapic::init(madt->ioapic_phys, madt->ioapic_gsi_base);
+				kernel::arch::x86_64::apic::ioapic::route_irq(
+					madt->irq0_gsi,
+					0x20,
+					kernel::arch::x86_64::apic::lapic::id(),
+					madt->irq0_flags
+				);
+				kernel::arch::x86_64::interrupts::use_apic();
+
+				kernel::arch::x86_64::pic::set_mask(0xFFFF);
+				apic_ok = true;
+			}
+		}
 	}
-	kernel::arch::x86_64::pic::remap(0x20, 0x28);
-	kernel::arch::x86_64::pic::set_mask(0xFFFE);
+
+	if (!apic_ok)
+	{
+		kernel::arch::x86_64::interrupts::use_pic();
+		kernel::arch::x86_64::pic::remap(0x20, 0x28);
+		kernel::arch::x86_64::pic::set_mask(0xFFFE);
+	}
 
 	kernel::time::init(1000);
 	kernel::arch::x86_64::sti();
@@ -140,7 +173,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 			kernel::log::write("tick ");
 			kernel::log::write_u64_dec(current);
 			kernel::log::write(" ms=");
-			kernel::log::write_u64_dec(kernel::time::ms_since_boot());
+			kernel::log::write_u64_dec(kernel::time::ms_since_time_init());
 			kernel::log::write("\n", 1);
 		}
 

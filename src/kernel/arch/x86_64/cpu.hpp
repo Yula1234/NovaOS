@@ -57,4 +57,59 @@ namespace kernel::arch::x86_64
 	{
 		asm volatile("invlpg (%0)" : : "r"(address) : "memory");
 	}
+
+	inline void cpuid(uint32_t leaf, uint32_t subleaf, uint32_t& eax, uint32_t& ebx, uint32_t& ecx, uint32_t& edx) noexcept
+	{
+		asm volatile(
+			"cpuid"
+			: "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+			: "a"(leaf), "c"(subleaf)
+		);
+	}
+
+	inline uint64_t rdmsr(uint32_t msr) noexcept
+	{
+		uint32_t lo;
+		uint32_t hi;
+		asm volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+		return (static_cast<uint64_t>(hi) << 32) | lo;
+	}
+
+	inline void wrmsr(uint32_t msr, uint64_t value) noexcept
+	{
+		const uint32_t lo = static_cast<uint32_t>(value);
+		const uint32_t hi = static_cast<uint32_t>(value >> 32);
+		asm volatile("wrmsr" : : "c"(msr), "a"(lo), "d"(hi));
+	}
+
+	inline bool nx_supported() noexcept
+	{
+		uint32_t eax;
+		uint32_t ebx;
+		uint32_t ecx;
+		uint32_t edx;
+
+		cpuid(0x80000000u, 0, eax, ebx, ecx, edx);
+		if (eax < 0x80000001u)
+		{
+			return false;
+		}
+
+		cpuid(0x80000001u, 0, eax, ebx, ecx, edx);
+		return (edx & (1u << 20)) != 0;
+	}
+
+	inline void enable_nx() noexcept
+	{
+		if (!nx_supported())
+		{
+			return;
+		}
+
+		constexpr uint32_t ia32_efer = 0xC0000080u;
+		constexpr uint64_t efer_nxe = 1ull << 11;
+
+		const uint64_t efer = rdmsr(ia32_efer);
+		wrmsr(ia32_efer, efer | efer_nxe);
+	}
 }

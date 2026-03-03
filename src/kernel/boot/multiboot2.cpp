@@ -96,4 +96,18 @@ namespace kernel::boot::multiboot2
 		const auto* m = memory_map();
 		return m ? m->entry_size : 0;
 	}
+
+	uint64_t Reader::acpi_rsdp_phys() const noexcept
+	{
+		const auto* tag_new = find(TagType::AcpiNew);
+		const auto* tag_old = find(TagType::AcpiOld);
+		const auto* tag = tag_new ? tag_new : tag_old;
+		if (!tag)
+		{
+			return 0;
+		}
+
+		const auto* rsdp_virt = reinterpret_cast<const uint8_t*>(tag) + sizeof(Tag);
+		return kernel::mm::physmap::to_phys(rsdp_virt);
+	}
 }

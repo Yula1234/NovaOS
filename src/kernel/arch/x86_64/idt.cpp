@@ -4,6 +4,7 @@
 
 #include "kernel/arch/x86_64/cpu.hpp"
 #include "kernel/arch/x86_64/interrupt_frame.hpp"
+#include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/irq.hpp"
 #include "kernel/log/log.hpp"
 
@@ -143,6 +144,8 @@ namespace kernel::arch::x86_64::idt
 		set_isr(0x2D, reinterpret_cast<void (*)()>(isr_irq13));
 		set_isr(0x2E, reinterpret_cast<void (*)()>(isr_irq14));
 		set_isr(0x2F, reinterpret_cast<void (*)()>(isr_irq15));
+
+		set_isr(0x30, reinterpret_cast<void (*)()>(kernel::arch::x86_64::apic::lapic::timer_isr()));
 
 		kernel::arch::x86_64::Idtr idtr{};
 		idtr.limit = static_cast<uint16_t>(sizeof(idt_table) - 1);

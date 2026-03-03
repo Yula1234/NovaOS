@@ -1,6 +1,6 @@
 #include "kernel/arch/x86_64/irq.hpp"
 
-#include "kernel/arch/x86_64/pic.hpp"
+#include "kernel/arch/x86_64/interrupts.hpp"
 
 namespace
 {
@@ -29,6 +29,6 @@ namespace kernel::arch::x86_64::irq
 			}
 		}
 
-		kernel::arch::x86_64::pic::eoi(irq);
+		kernel::arch::x86_64::interrupts::eoi(irq);
 	}
 }
