@@ -25,6 +25,18 @@ namespace kernel::arch::x86_64
 		asm volatile("cli");
 	}
 
+	inline bool interrupts_enabled() noexcept
+	{
+		uint64_t rflags;
+		asm volatile(
+			"pushfq\n"
+			"pop %0\n"
+			: "=r"(rflags)
+		);
+
+		return (rflags & (1ull << 9)) != 0;
+	}
+
 	[[noreturn]] inline void halt_forever() noexcept
 	{
 		for (;;)
