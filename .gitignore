@@ -1,0 +1,11 @@
+/build/
+
+*.o
+*.a
+*.elf
+*.bin
+*.iso
+*.img
+
+*.py
+*.txt
