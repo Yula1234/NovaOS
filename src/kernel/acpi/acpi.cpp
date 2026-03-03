@@ -62,6 +62,14 @@ namespace
 		InterruptSourceOverride = 2,
 	};
 
+	struct [[gnu::packed]] MadtLocalApic
+	{
+		MadtEntryHeader h;
+		uint8_t acpi_processor_id;
+		uint8_t apic_id;
+		uint32_t flags;
+	};
+
 	struct [[gnu::packed]] MadtIoApic
 	{
 		MadtEntryHeader h;
@@ -166,6 +174,10 @@ namespace
 
 	kernel::acpi::MadtInfo madt_info{};
 	bool madt_present = false;
+
+	constexpr size_t max_cpus = 256;
+	kernel::acpi::CpuInfo cpu_list[max_cpus]{};
+	size_t cpu_count = 0;
 
 	kernel::acpi::HpetInfo hpet_info{};
 	bool hpet_present = false;
@@ -284,6 +296,10 @@ namespace kernel::acpi
 		madt_info.ioapic_gsi_base = 0;
 		madt_info.irq0_gsi = 0;
 		madt_info.irq0_flags = 0;
+		madt_info.cpus = nullptr;
+		madt_info.cpu_count = 0;
+
+		cpu_count = 0;
 
 		uint32_t irq0_gsi = 0;
 		uint16_t irq0_flags = 0;
@@ -297,6 +313,21 @@ namespace kernel::acpi
 			if (eh->length < sizeof(MadtEntryHeader) || p + eh->length > end)
 			{
 				break;
+			}
+
+			if (eh->type == static_cast<uint8_t>(MadtEntryType::LocalApic) && eh->length >= sizeof(MadtLocalApic))
+			{
+				const auto* la = reinterpret_cast<const MadtLocalApic*>(p);
+				if (cpu_count < max_cpus)
+				{
+					kernel::acpi::CpuInfo info{};
+					info.apic_id = la->apic_id;
+					info.acpi_uid = la->acpi_processor_id;
+					info.enabled = (la->flags & 1u) != 0;
+
+					cpu_list[cpu_count] = info;
+					++cpu_count;
+				}
 			}
 
 			if (eh->type == static_cast<uint8_t>(MadtEntryType::IoApic) && eh->length >= sizeof(MadtIoApic))
@@ -324,6 +355,8 @@ namespace kernel::acpi
 
 		madt_info.irq0_gsi = irq0_gsi;
 		madt_info.irq0_flags = irq0_flags;
+		madt_info.cpus = cpu_list;
+		madt_info.cpu_count = cpu_count;
 
 		madt_present = madt_info.ioapic_phys != 0 && madt_info.lapic_phys != 0;
 
@@ -331,6 +364,8 @@ namespace kernel::acpi
 		kernel::log::write_u64_hex(madt_info.lapic_phys);
 		kernel::log::write(" ioapic=");
 		kernel::log::write_u64_hex(madt_info.ioapic_phys);
+		kernel::log::write(" cpus=");
+		kernel::log::write_u64_dec(cpu_count);
 		kernel::log::write(" irq0_gsi=");
 		kernel::log::write_u64_dec(madt_info.irq0_gsi);
 		kernel::log::write(" hpet=");

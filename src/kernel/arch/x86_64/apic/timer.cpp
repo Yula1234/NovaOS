@@ -19,12 +19,15 @@ namespace
 	constexpr uint8_t vector_timer = 0x30;
 
 	std::atomic<uint64_t> tick_counter{0};
+	std::atomic<uint64_t> tick_counter_per_cpu[256]{};
 	uint32_t active_hz = 0;
 	uint32_t ticks_per_ms = 0;
 
 	void on_tick() noexcept
 	{
 		tick_counter.fetch_add(1, std::memory_order_relaxed);
+		const uint32_t apic_id = kernel::arch::x86_64::apic::lapic::id() & 0xFFu;
+		tick_counter_per_cpu[apic_id].fetch_add(1, std::memory_order_relaxed);
 		kernel::arch::x86_64::apic::lapic::eoi();
 	}
 }
@@ -34,6 +37,11 @@ namespace kernel::arch::x86_64::apic::timer
 	uint64_t ticks() noexcept
 	{
 		return tick_counter.load(std::memory_order_relaxed);
+	}
+
+	uint64_t ticks_cpu(uint32_t apic_id) noexcept
+	{
+		return tick_counter_per_cpu[apic_id & 0xFFu].load(std::memory_order_relaxed);
 	}
 
 	uint32_t frequency_hz() noexcept

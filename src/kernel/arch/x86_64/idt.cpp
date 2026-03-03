@@ -146,6 +146,7 @@ namespace kernel::arch::x86_64::idt
 		set_isr(0x2F, reinterpret_cast<void (*)()>(isr_irq15));
 
 		set_isr(0x30, reinterpret_cast<void (*)()>(kernel::arch::x86_64::apic::lapic::timer_isr()));
+		set_isr(0x31, reinterpret_cast<void (*)()>(kernel::arch::x86_64::apic::lapic::ipi_isr()));
 
 		kernel::arch::x86_64::Idtr idtr{};
 		idtr.limit = static_cast<uint16_t>(sizeof(idt_table) - 1);

@@ -10,6 +10,8 @@ namespace
 	constexpr uint32_t reg_id = 0x20;
 	constexpr uint32_t reg_eoi = 0xB0;
 	constexpr uint32_t reg_svr = 0xF0;
+	constexpr uint32_t reg_icr_low = 0x300;
+	constexpr uint32_t reg_icr_high = 0x310;
 	constexpr uint32_t reg_lvt_timer = 0x320;
 	constexpr uint32_t reg_timer_init = 0x380;
 	constexpr uint32_t reg_timer_cur = 0x390;
@@ -19,6 +21,7 @@ namespace
 
 	volatile uint32_t* lapic_regs = nullptr;
 	void (*timer_handler)() noexcept = nullptr;
+	void (*ipi_handler)() noexcept = nullptr;
 	bool lapic_ready = false;
 
 	inline uint32_t read_reg(uint32_t off) noexcept
@@ -40,6 +43,29 @@ namespace
 		}
 
 		kernel::arch::x86_64::apic::lapic::eoi();
+	}
+
+	[[gnu::interrupt]] void isr_ipi(kernel::arch::x86_64::InterruptFrame*) noexcept
+	{
+		if (ipi_handler)
+		{
+			ipi_handler();
+			kernel::arch::x86_64::apic::lapic::eoi();
+			return;
+		}
+
+		kernel::arch::x86_64::apic::lapic::eoi();
+	}
+
+	inline void write_icr(uint32_t high, uint32_t low) noexcept
+	{
+		write_reg(reg_icr_high, high);
+		write_reg(reg_icr_low, low);
+
+		while ((read_reg(reg_icr_low) & (1u << 12)) != 0)
+		{
+			asm volatile("pause");
+		}
 	}
 }
 
@@ -79,6 +105,25 @@ namespace kernel::arch::x86_64::apic::lapic
 		return read_reg(reg_id) >> 24;
 	}
 
+	void send_ipi(uint32_t dest_apic_id, uint8_t vector) noexcept
+	{
+		const uint32_t high = (dest_apic_id & 0xFFu) << 24;
+		const uint32_t low = static_cast<uint32_t>(vector);
+		write_icr(high, low);
+	}
+
+	void broadcast_ipi(uint8_t vector, bool include_self) noexcept
+	{
+		const uint32_t shorthand = include_self ? (2u << 18) : (3u << 18);
+		const uint32_t low = static_cast<uint32_t>(vector) | shorthand;
+		write_icr(0, low);
+	}
+
+	void set_ipi_handler(void (*handler)() noexcept) noexcept
+	{
+		ipi_handler = handler;
+	}
+
 	void set_timer_handler(void (*handler)() noexcept) noexcept
 	{
 		timer_handler = handler;
@@ -107,5 +152,10 @@ namespace kernel::arch::x86_64::apic::lapic
 	void* timer_isr() noexcept
 	{
 		return reinterpret_cast<void*>(&isr_timer);
+	}
+
+	void* ipi_isr() noexcept
+	{
+		return reinterpret_cast<void*>(&isr_ipi);
 	}
 }

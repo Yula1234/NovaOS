@@ -10,6 +10,13 @@ namespace kernel::boot::multiboot2
 
 namespace kernel::acpi
 {
+	struct CpuInfo
+	{
+		uint8_t apic_id;
+		uint8_t acpi_uid;
+		bool enabled;
+	};
+
 	struct MadtInfo
 	{
 		uint64_t lapic_phys;
@@ -18,6 +25,9 @@ namespace kernel::acpi
 
 		uint32_t irq0_gsi;
 		uint16_t irq0_flags;
+
+		const CpuInfo* cpus;
+		size_t cpu_count;
 	};
 
 	struct HpetInfo
