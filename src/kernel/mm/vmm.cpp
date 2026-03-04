@@ -270,6 +270,134 @@ namespace
 		return true;
 	}
 
+	struct WalkPath4k
+	{
+		uint64_t pml4_i = 0;
+		uint64_t pdpt_i = 0;
+		uint64_t pd_i = 0;
+		uint64_t pt_i = 0;
+
+		uint64_t pdpt_phys = 0;
+		uint64_t pd_phys = 0;
+		uint64_t pt_phys = 0;
+	};
+
+	bool walk_to_pt_4k_create(uint64_t pml4_phys, uint64_t virt, WalkPath4k& out) noexcept
+	{
+		out.pml4_i = pml4_index(virt);
+		out.pdpt_i = pdpt_index(virt);
+		out.pd_i = pd_index(virt);
+		out.pt_i = pt_index(virt);
+
+		const uint64_t table_flags = bit_present | bit_writable;
+
+		out.pdpt_phys = ensure_table(pml4_phys, out.pml4_i, table_flags);
+		if (!out.pdpt_phys)
+		{
+			return false;
+		}
+
+		out.pd_phys = ensure_table(out.pdpt_phys, out.pdpt_i, table_flags);
+		if (!out.pd_phys)
+		{
+			return false;
+		}
+
+		out.pt_phys = ensure_table(out.pd_phys, out.pd_i, table_flags);
+		if (!out.pt_phys)
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	bool walk_to_pt_4k_existing(uint64_t pml4_phys, uint64_t virt, WalkPath4k& out) noexcept
+	{
+		out.pml4_i = pml4_index(virt);
+		out.pdpt_i = pdpt_index(virt);
+		out.pd_i = pd_index(virt);
+		out.pt_i = pt_index(virt);
+
+		auto* pml4 = table_virt(pml4_phys);
+		const uint64_t pml4e = pml4[out.pml4_i];
+		if (!entry_present(pml4e) || entry_is_large(pml4e))
+		{
+			return false;
+		}
+
+		out.pdpt_phys = entry_addr(pml4e);
+		auto* pdpt = table_virt(out.pdpt_phys);
+		const uint64_t pdpte = pdpt[out.pdpt_i];
+		if (!entry_present(pdpte) || entry_is_large(pdpte))
+		{
+			return false;
+		}
+
+		out.pd_phys = entry_addr(pdpte);
+		auto* pd = table_virt(out.pd_phys);
+		const uint64_t pde = pd[out.pd_i];
+		if (!entry_present(pde) || entry_is_large(pde))
+		{
+			return false;
+		}
+
+		out.pt_phys = entry_addr(pde);
+		return true;
+	}
+
+	bool walk_to_pt_4k_existing_const(uint64_t pml4_phys, uint64_t virt, WalkPath4k& out) noexcept
+	{
+		out.pml4_i = pml4_index(virt);
+		out.pdpt_i = pdpt_index(virt);
+		out.pd_i = pd_index(virt);
+		out.pt_i = pt_index(virt);
+
+		const auto* pml4 = table_virt_const(pml4_phys);
+		const uint64_t pml4e = pml4[out.pml4_i];
+		if (!entry_present(pml4e) || entry_is_large(pml4e))
+		{
+			return false;
+		}
+
+		out.pdpt_phys = entry_addr(pml4e);
+		const auto* pdpt = table_virt_const(out.pdpt_phys);
+		const uint64_t pdpte = pdpt[out.pdpt_i];
+		if (!entry_present(pdpte) || entry_is_large(pdpte))
+		{
+			return false;
+		}
+
+		out.pd_phys = entry_addr(pdpte);
+		const auto* pd = table_virt_const(out.pd_phys);
+		const uint64_t pde = pd[out.pd_i];
+		if (!entry_present(pde) || entry_is_large(pde))
+		{
+			return false;
+		}
+
+		out.pt_phys = entry_addr(pde);
+		return true;
+	}
+
+	void cleanup_empty_tables_after_pt_update(uint64_t pml4_phys, const WalkPath4k& path) noexcept
+	{
+		if (table_empty(path.pt_phys))
+		{
+			remove_table_if_empty(path.pd_phys, path.pd_i);
+		}
+
+		if (table_empty(path.pd_phys))
+		{
+			remove_table_if_empty(path.pdpt_phys, path.pdpt_i);
+		}
+
+		if (table_empty(path.pdpt_phys))
+		{
+			remove_table_if_empty(pml4_phys, path.pml4_i);
+		}
+	}
+
 	kernel::mm::vmm::AddressSpace kernel_as;
 }
 
@@ -308,33 +436,14 @@ namespace kernel::mm::vmm
 				return false;
 			}
 
-			const uint64_t pml4_i = pml4_index(virt);
-			const uint64_t pdpt_i = pdpt_index(virt);
-			const uint64_t pd_i = pd_index(virt);
-			const uint64_t pt_i = pt_index(virt);
-
-			const uint64_t table_flags = bit_present | bit_writable;
-
-			const uint64_t pdpt_phys = ensure_table(pml4_phys_, pml4_i, table_flags);
-			if (!pdpt_phys)
+			WalkPath4k path{};
+			if (!walk_to_pt_4k_create(pml4_phys_, virt, path))
 			{
 				return false;
 			}
 
-			const uint64_t pd_phys = ensure_table(pdpt_phys, pdpt_i, table_flags);
-			if (!pd_phys)
-			{
-				return false;
-			}
-
-			const uint64_t pt_phys = ensure_table(pd_phys, pd_i, table_flags);
-			if (!pt_phys)
-			{
-				return false;
-			}
-
-			auto* pt = table_virt(pt_phys);
-			pt[pt_i] = make_entry(phys, flags | PageFlags::Present);
+			auto* pt = table_virt(path.pt_phys);
+			pt[path.pt_i] = make_entry(phys, flags | PageFlags::Present);
 
 			shoot_cr3 = pml4_phys_;
 			ok = true;
@@ -363,7 +472,6 @@ namespace kernel::mm::vmm
 			const uint64_t pml4_i = pml4_index(virt);
 			const uint64_t pdpt_i = pdpt_index(virt);
 			const uint64_t pd_i = pd_index(virt);
-			const uint64_t pt_i = pt_index(virt);
 
 			auto* pml4 = table_virt(pml4_phys_);
 			const uint64_t pml4e = pml4[pml4_i];
@@ -407,30 +515,21 @@ namespace kernel::mm::vmm
 			}
 			else
 			{
-				const uint64_t pt_phys = entry_addr(pde);
-				auto* pt = table_virt(pt_phys);
-				const uint64_t pte = pt[pt_i];
+				WalkPath4k path{};
+				if (!walk_to_pt_4k_existing(pml4_phys_, virt, path))
+				{
+					return false;
+				}
+
+				auto* pt = table_virt(path.pt_phys);
+				const uint64_t pte = pt[path.pt_i];
 				if (!entry_present(pte))
 				{
 					return false;
 				}
 
-				pt[pt_i] = 0;
-
-				if (table_empty(pt_phys))
-				{
-					remove_table_if_empty(pd_phys, pd_i);
-				}
-
-				if (table_empty(pd_phys))
-				{
-					remove_table_if_empty(pdpt_phys, pdpt_i);
-				}
-
-				if (table_empty(pdpt_phys))
-				{
-					remove_table_if_empty(pml4_phys_, pml4_i);
-				}
+				pt[path.pt_i] = 0;
+				cleanup_empty_tables_after_pt_update(pml4_phys_, path);
 
 				shoot_cr3 = pml4_phys_;
 				ok = true;
@@ -454,7 +553,6 @@ namespace kernel::mm::vmm
 		const uint64_t pml4_i = pml4_index(virt);
 		const uint64_t pdpt_i = pdpt_index(virt);
 		const uint64_t pd_i = pd_index(virt);
-		const uint64_t pt_i = pt_index(virt);
 
 		const auto* pml4 = table_virt_const(pml4_phys_);
 		const uint64_t pml4e = pml4[pml4_i];
@@ -493,9 +591,14 @@ namespace kernel::mm::vmm
 			return base + page_off;
 		}
 
-		const uint64_t pt_phys = entry_addr(pde);
-		const auto* pt = table_virt_const(pt_phys);
-		const uint64_t pte = pt[pt_i];
+		WalkPath4k path{};
+		if (!walk_to_pt_4k_existing_const(pml4_phys_, virt, path))
+		{
+			return 0;
+		}
+
+		const auto* pt = table_virt_const(path.pt_phys);
+		const uint64_t pte = pt[path.pt_i];
 		if (!entry_present(pte))
 		{
 			return 0;
