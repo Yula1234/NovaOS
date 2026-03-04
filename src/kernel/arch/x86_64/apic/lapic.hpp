@@ -15,6 +15,7 @@ namespace kernel::arch::x86_64::apic::lapic
 
 	void send_ipi(uint32_t dest_apic_id, uint8_t vector) noexcept;
 	void broadcast_ipi(uint8_t vector, bool include_self) noexcept;
+	void broadcast_nmi(bool include_self) noexcept;
 	void send_init_ipi_assert(uint32_t dest_apic_id) noexcept;
 	void send_init_ipi_deassert(uint32_t dest_apic_id) noexcept;
 	void send_init_ipi_edge(uint32_t dest_apic_id) noexcept;

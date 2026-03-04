@@ -22,6 +22,7 @@ namespace
 
 	constexpr uint32_t icr_delivery_init = 0b101u << 8;
 	constexpr uint32_t icr_delivery_startup = 0b110u << 8;
+	constexpr uint32_t icr_delivery_nmi = 0b100u << 8;
 	constexpr uint32_t icr_level_assert = 1u << 14;
 	constexpr uint32_t icr_level_deassert = 0u << 14;
 	constexpr uint32_t icr_trigger_level = 1u << 15;
@@ -171,6 +172,12 @@ namespace kernel::arch::x86_64::apic::lapic
 		const uint32_t shorthand = include_self ? (2u << 18) : (3u << 18);
 		const uint32_t low = static_cast<uint32_t>(vector) | shorthand;
 		write_icr(0, low);
+	}
+
+	void broadcast_nmi(bool include_self) noexcept
+	{
+		const uint32_t shorthand = include_self ? (2u << 18) : (3u << 18);
+		write_icr(0, icr_delivery_nmi | icr_level_assert | icr_trigger_edge | shorthand);
 	}
 
 	void broadcast_init_ipi_assert(bool include_self) noexcept

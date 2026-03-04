@@ -7,6 +7,7 @@
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/irq.hpp"
 #include "kernel/arch/x86_64/gdt.hpp"
+#include "kernel/arch/x86_64/tlb.hpp"
 #include "kernel/log/log.hpp"
 
 namespace
@@ -77,6 +78,12 @@ namespace
 		hang();
 	}
 
+	[[gnu::interrupt]] void isr_nmi(kernel::arch::x86_64::InterruptFrame*) noexcept
+	{
+		asm volatile("cld" ::: "cc");
+		kernel::arch::x86_64::tlb::on_nmi();
+	}
+
 	[[gnu::interrupt]] void isr_gpf(kernel::arch::x86_64::InterruptFrame* frame, uint64_t error_code) noexcept
 	{
 		asm volatile("cld" ::: "cc");
@@ -138,7 +145,7 @@ namespace kernel::arch::x86_64::idt
 		set_isr(13, reinterpret_cast<void (*)()>(isr_gpf));
 		set_isr_ist(14, reinterpret_cast<void (*)()>(isr_page_fault), 3);
 		set_isr_ist(8, reinterpret_cast<void (*)()>(isr_default), 1);
-		set_isr_ist(2, reinterpret_cast<void (*)()>(isr_default), 2);
+		set_isr_ist(2, reinterpret_cast<void (*)()>(isr_nmi), 2);
 
 		set_isr(0x20, reinterpret_cast<void (*)()>(isr_irq0));
 		set_isr(0x21, reinterpret_cast<void (*)()>(isr_irq1));

@@ -10,7 +10,6 @@
 namespace
 {
 	constexpr uint64_t cr3_mask = 0x000FFFFFFFFFF000ull;
-	constexpr uint8_t ipi_vector = 0x31;
 
 	kernel::lib::SpinLock shoot_lock;
 
@@ -28,7 +27,7 @@ namespace
 		return n > 0 ? static_cast<uint32_t>(n - 1) : 0;
 	}
 
-	void on_ipi() noexcept
+	void handle_shootdown() noexcept
 	{
 		const uint32_t apic_id = kernel::arch::x86_64::apic::lapic::id() & 0xFFu;
 
@@ -57,7 +56,13 @@ namespace kernel::arch::x86_64::tlb
 {
 	void init() noexcept
 	{
-		kernel::arch::x86_64::apic::lapic::set_ipi_handler(on_ipi);
+		(void)0;
+	}
+
+	void on_nmi() noexcept
+	{
+		handle_shootdown();
+		kernel::arch::x86_64::apic::lapic::eoi();
 	}
 
 	void shootdown_page(uint64_t target_cr3_phys, uint64_t virt) noexcept
@@ -83,7 +88,7 @@ namespace kernel::arch::x86_64::tlb
 		shoot_acks.store(0, std::memory_order_relaxed);
 		shoot_seq.fetch_add(1, std::memory_order_release);
 
-		kernel::arch::x86_64::apic::lapic::broadcast_ipi(ipi_vector, false);
+		kernel::arch::x86_64::apic::lapic::broadcast_nmi(false);
 		kernel::arch::x86_64::invlpg(reinterpret_cast<void*>(virt));
 
 		while (shoot_acks.load(std::memory_order_acquire) < expected)
