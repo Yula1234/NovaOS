@@ -370,6 +370,38 @@ namespace kernel::mm::pmm
 		return 0;
 	}
 
+	uint64_t alloc_page_at(uint64_t phys_addr) noexcept
+	{
+		if ((phys_addr % page_size) != 0)
+		{
+			return 0;
+		}
+
+		if (phys_addr >= alloc_limit_bytes)
+		{
+			return 0;
+		}
+
+		const uint64_t index = phys_addr / page_size;
+		if (index >= page_count)
+		{
+			return 0;
+		}
+
+		if (bitmap_test(index))
+		{
+			return 0;
+		}
+
+		bitmap_set(index);
+		if (free_pages > 0)
+		{
+			--free_pages;
+		}
+
+		return phys_addr;
+	}
+
 	void free_page(uint64_t phys_addr) noexcept
 	{
 		if ((phys_addr % page_size) != 0)

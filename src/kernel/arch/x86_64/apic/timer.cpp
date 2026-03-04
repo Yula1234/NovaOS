@@ -22,6 +22,8 @@ namespace
 	std::atomic<uint64_t> tick_counter_per_cpu[256]{};
 	uint32_t active_hz = 0;
 	uint32_t ticks_per_ms = 0;
+	uint32_t calibrated_init_count = 0;
+	uint32_t calibrated_div = 0;
 
 	void on_tick() noexcept
 	{
@@ -49,6 +51,29 @@ namespace kernel::arch::x86_64::apic::timer
 		return active_hz;
 	}
 
+	uint32_t init_count() noexcept
+	{
+		return calibrated_init_count;
+	}
+
+	void init_cpu() noexcept
+	{
+		if (active_hz == 0 || calibrated_init_count == 0)
+		{
+			return;
+		}
+
+		if (!kernel::arch::x86_64::apic::lapic::available())
+		{
+			return;
+		}
+
+		kernel::arch::x86_64::apic::lapic::write_timer_div(calibrated_div);
+		kernel::arch::x86_64::apic::lapic::set_timer_handler(on_tick);
+		kernel::arch::x86_64::apic::lapic::write_lvt_timer(static_cast<uint32_t>(vector_timer) | lvt_periodic);
+		kernel::arch::x86_64::apic::lapic::write_timer_init(calibrated_init_count);
+	}
+
 	bool init_calibrated(uint32_t hz) noexcept
 	{
 		if (hz == 0)
@@ -70,7 +95,8 @@ namespace kernel::arch::x86_64::apic::timer
 		constexpr uint32_t calib_ms = 100;
 		const uint64_t calib_ns = static_cast<uint64_t>(calib_ms) * 1000ull * 1000ull;
 
-		kernel::arch::x86_64::apic::lapic::write_timer_div(0x3);
+		calibrated_div = 0x3;
+		kernel::arch::x86_64::apic::lapic::write_timer_div(calibrated_div);
 		kernel::arch::x86_64::apic::lapic::write_lvt_timer(static_cast<uint32_t>(vector_timer) | lvt_masked);
 
 		kernel::arch::x86_64::apic::lapic::write_timer_init(0xFFFFFFFFu);
@@ -98,12 +124,11 @@ namespace kernel::arch::x86_64::apic::timer
 		}
 
 		const uint32_t init = static_cast<uint32_t>(init64 > 0xFFFFFFFFull ? 0xFFFFFFFFull : init64);
+		calibrated_init_count = init;
 		const uint64_t ticks_per_ms64 = (static_cast<uint64_t>(elapsed) + (static_cast<uint64_t>(calib_ms) / 2)) / static_cast<uint64_t>(calib_ms);
 		ticks_per_ms = static_cast<uint32_t>(ticks_per_ms64 == 0 ? 1 : ticks_per_ms64);
 
-		kernel::arch::x86_64::apic::lapic::set_timer_handler(on_tick);
-		kernel::arch::x86_64::apic::lapic::write_lvt_timer(static_cast<uint32_t>(vector_timer) | lvt_periodic);
-		kernel::arch::x86_64::apic::lapic::write_timer_init(init);
+		init_cpu();
 
 		kernel::log::write("apic calib ns=");
 		kernel::log::write_u64_dec(hpet_delta);

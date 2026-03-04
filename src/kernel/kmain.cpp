@@ -12,6 +12,7 @@
 #include "kernel/arch/x86_64/apic/ioapic.hpp"
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/pic.hpp"
+#include "kernel/arch/x86_64/smp.hpp"
 
 #include "kernel/time/time.hpp"
 
@@ -157,6 +158,14 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 	}
 
 	kernel::time::init(1000);
+
+	if (apic_ok)
+	{
+		if (const auto* madt = kernel::acpi::madt())
+		{
+			kernel::arch::x86_64::smp::init(*madt);
+		}
+	}
 	kernel::arch::x86_64::sti();
 
 	uint64_t last_second_tick = 0;
@@ -170,11 +179,11 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 		{
 			last_second_tick = current;
 
-			kernel::log::write("tick ");
-			kernel::log::write_u64_dec(current);
-			kernel::log::write(" ms=");
-			kernel::log::write_u64_dec(kernel::time::ms_since_time_init());
-			kernel::log::write("\n", 1);
+			// kernel::log::write("tick ");
+			// kernel::log::write_u64_dec(current);
+			// kernel::log::write(" ms=");
+			// kernel::log::write_u64_dec(kernel::time::ms_since_time_init());
+			// kernel::log::write("\n", 1);
 		}
 
 		asm volatile("hlt");

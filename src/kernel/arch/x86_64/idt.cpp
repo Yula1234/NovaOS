@@ -24,6 +24,7 @@ namespace
 	static_assert(sizeof(IdtEntry) == 16);
 
 	IdtEntry idt_table[256];
+	kernel::arch::x86_64::Idtr active_idtr{};
 
 	IdtEntry make_entry(void (*handler)(), uint8_t type_attr) noexcept
 	{
@@ -148,10 +149,19 @@ namespace kernel::arch::x86_64::idt
 		set_isr(0x30, reinterpret_cast<void (*)()>(kernel::arch::x86_64::apic::lapic::timer_isr()));
 		set_isr(0x31, reinterpret_cast<void (*)()>(kernel::arch::x86_64::apic::lapic::ipi_isr()));
 
-		kernel::arch::x86_64::Idtr idtr{};
-		idtr.limit = static_cast<uint16_t>(sizeof(idt_table) - 1);
-		idtr.base = reinterpret_cast<uint64_t>(&idt_table[0]);
+		active_idtr.limit = static_cast<uint16_t>(sizeof(idt_table) - 1);
+		active_idtr.base = reinterpret_cast<uint64_t>(&idt_table[0]);
 
-		kernel::arch::x86_64::lidt(idtr);
+		kernel::arch::x86_64::lidt(active_idtr);
+	}
+
+	void reload() noexcept
+	{
+		if (active_idtr.limit == 0 || active_idtr.base == 0)
+		{
+			return;
+		}
+
+		kernel::arch::x86_64::lidt(active_idtr);
 	}
 }

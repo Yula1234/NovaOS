@@ -22,5 +22,6 @@ namespace kernel::mm::pmm
 	void set_alloc_limit(uint64_t limit_bytes) noexcept;
 
 	uint64_t alloc_page() noexcept;
+	uint64_t alloc_page_at(uint64_t phys_addr) noexcept;
 	void free_page(uint64_t phys_addr) noexcept;
 }

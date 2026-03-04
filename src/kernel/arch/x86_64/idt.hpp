@@ -5,4 +5,5 @@
 namespace kernel::arch::x86_64::idt
 {
 	void init() noexcept;
+	void reload() noexcept;
 }
