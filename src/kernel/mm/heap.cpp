@@ -10,7 +10,7 @@
 #include "lib/lock.hpp"
 #include "kernel/log/log.hpp"
 #include "kernel/mm/pmm.hpp"
-#include "kernel/mm/vmar.hpp"
+#include "kernel/mm/vmalloc.hpp"
 #include "kernel/mm/vmm.hpp"
 
 namespace
@@ -85,62 +85,6 @@ namespace
 		}
 
 		return order;
-	}
-
-	bool map_anonymous_pages(uint64_t base, uint32_t pages) noexcept
-	{
-		for (uint32_t i = 0; i < pages; ++i)
-		{
-			const uint64_t v = base + static_cast<uint64_t>(i) * page_size;
-			const uint64_t phys = kernel::mm::pmm::alloc_page();
-			if (phys == 0)
-			{
-				for (uint32_t j = 0; j < i; ++j)
-				{
-					const uint64_t rollback_v = base + static_cast<uint64_t>(j) * page_size;
-					const uint64_t rollback_phys = kernel::mm::vmm::kernel_space().translate(rollback_v);
-					kernel::mm::vmm::kernel_space().unmap_page(rollback_v);
-					if (rollback_phys != 0)
-					{
-						kernel::mm::pmm::free_page(rollback_phys);
-					}
-				}
-				return false;
-			}
-
-			const auto flags = kernel::mm::vmm::PageFlags::Writable | kernel::mm::vmm::PageFlags::NoExecute;
-			if (!kernel::mm::vmm::kernel_space().map_page(v, phys, flags))
-			{
-				kernel::mm::pmm::free_page(phys);
-				for (uint32_t j = 0; j < i; ++j)
-				{
-					const uint64_t rollback_v = base + static_cast<uint64_t>(j) * page_size;
-					const uint64_t rollback_phys = kernel::mm::vmm::kernel_space().translate(rollback_v);
-					kernel::mm::vmm::kernel_space().unmap_page(rollback_v);
-					if (rollback_phys != 0)
-					{
-						kernel::mm::pmm::free_page(rollback_phys);
-					}
-				}
-				return false;
-			}
-		}
-
-		return true;
-	}
-
-	void unmap_and_free_pages(uint64_t base, uint32_t pages) noexcept
-	{
-		for (uint32_t i = 0; i < pages; ++i)
-		{
-			const uint64_t v = base + static_cast<uint64_t>(i) * page_size;
-			const uint64_t phys = kernel::mm::vmm::kernel_space().translate(v);
-			kernel::mm::vmm::kernel_space().unmap_page(v);
-			if (phys != 0)
-			{
-				kernel::mm::pmm::free_page(phys);
-			}
-		}
 	}
 
 	void heap_list_init() noexcept
@@ -841,18 +785,12 @@ namespace
 		const uint64_t total = kernel::lib::align_up(sizeof(LargeHeader) + size, page_size);
 		const uint32_t pages = static_cast<uint32_t>(total / page_size);
 
-		auto* base_ptr = kernel::mm::vmar::alloc(kernel::mm::vmar::Arena::Vmalloc, total, page_size);
+		auto* base_ptr = kernel::mm::vmalloc::vmalloc(total, page_size);
 		if (!base_ptr)
 		{
 			return nullptr;
 		}
 		const uint64_t base = reinterpret_cast<uint64_t>(base_ptr);
-
-		if (!map_anonymous_pages(base, pages))
-		{
-			kernel::mm::vmar::free(kernel::mm::vmar::Arena::Vmalloc, base_ptr, total);
-			return nullptr;
-		}
 
 		auto* h = large_from_page(base);
 		h->magic = large_magic;
@@ -876,8 +814,7 @@ namespace
 			kernel::arch::x86_64::halt_forever();
 		}
 
-		unmap_and_free_pages(page, pages);
-		kernel::mm::vmar::free(kernel::mm::vmar::Arena::Vmalloc, reinterpret_cast<void*>(page), total);
+		kernel::mm::vmalloc::vfree(reinterpret_cast<void*>(page), total);
 	}
 
 	bool is_slab_ptr(const void* ptr) noexcept
