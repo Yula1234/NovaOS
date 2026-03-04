@@ -1,5 +1,22 @@
 #include "string.h"
 
+#include "kernel/arch/x86_64/cpu.hpp"
+
+namespace
+{
+	bool erms_available() noexcept
+	{
+		static uint8_t cached = 0xFF;
+		if (cached != 0xFF)
+		{
+			return cached != 0;
+		}
+
+		cached = kernel::arch::x86_64::erms_supported() ? static_cast<uint8_t>(1) : static_cast<uint8_t>(0);
+		return cached != 0;
+	}
+}
+
 extern "C"
 {
 	void* memcpy(void* dst, const void* src, size_t n)
@@ -12,6 +29,19 @@ extern "C"
 		void* out = dst;
 		auto* d = static_cast<uint8_t*>(dst);
 		auto* s = static_cast<const uint8_t*>(src);
+
+		if (erms_available())
+		{
+			asm volatile(
+				"cld\n"
+				"rep movsb\n"
+				: "+D"(d), "+S"(s), "+c"(n)
+				:
+				: "memory"
+			);
+
+			return out;
+		}
 
 		size_t qwords = n / 8;
 		size_t bytes = n % 8;
@@ -78,6 +108,19 @@ extern "C"
 
 		void* out = dst;
 		auto* d = static_cast<uint8_t*>(dst);
+
+		if (erms_available())
+		{
+			asm volatile(
+				"cld\n"
+				"rep stosb\n"
+				: "+D"(d), "+c"(n)
+				: "a"(static_cast<uint8_t>(value))
+				: "memory"
+			);
+
+			return out;
+		}
 
 		const uint64_t byte = static_cast<uint8_t>(value);
 		const uint64_t pattern = byte * 0x0101010101010101ull;

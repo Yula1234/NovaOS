@@ -143,6 +143,23 @@ namespace kernel::arch::x86_64
 		return (edx & (1u << 26)) != 0;
 	}
 
+	inline bool erms_supported() noexcept
+	{
+		uint32_t eax;
+		uint32_t ebx;
+		uint32_t ecx;
+		uint32_t edx;
+
+		cpuid(0u, 0, eax, ebx, ecx, edx);
+		if (eax < 7u)
+		{
+			return false;
+		}
+
+		cpuid(7u, 0, eax, ebx, ecx, edx);
+		return (ebx & (1u << 9)) != 0;
+	}
+
 	inline void enable_nx() noexcept
 	{
 		if (!nx_supported())
