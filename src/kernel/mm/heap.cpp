@@ -305,7 +305,7 @@ namespace
 		auto& list = classes[class_i];
 		auto& c = per_cpu_cache[cpu_index()][class_i];
 
-		const uint64_t rflags = kernel::lib::irq_save_disable();
+		kernel::lib::IrqMcsLockGuard class_guard(list.lock);
 
 		while (c.count < per_cpu_obj_capacity)
 		{
@@ -320,8 +320,6 @@ namespace
 		}
 
 		const bool result = c.count != 0;
-
-		kernel::lib::irq_restore(rflags);
 		return result;
 	}
 
