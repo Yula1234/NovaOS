@@ -134,23 +134,23 @@ namespace
 
 	bool is_allocated(uint32_t page_index) noexcept
 	{
-		const uint8_t v = page_meta[page_index].flags.load(std::memory_order_relaxed);
+		const uint8_t v = page_meta[page_index].flags.load(std::memory_order_acquire);
 		return (v & static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated)) != 0;
 	}
 
 	void set_allocated(uint32_t page_index) noexcept
 	{
-		page_meta[page_index].flags.fetch_or(static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated), std::memory_order_relaxed);
+		page_meta[page_index].flags.fetch_or(static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated), std::memory_order_acquire);
 	}
 
 	void clear_allocated(uint32_t page_index) noexcept
 	{
-		page_meta[page_index].flags.fetch_and(static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Allocated), std::memory_order_relaxed);
+		page_meta[page_index].flags.fetch_and(static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Allocated), std::memory_order_release);
 	}
 
 	bool is_reserved(uint32_t page_index) noexcept
 	{
-		const uint8_t v = page_meta[page_index].flags.load(std::memory_order_relaxed);
+		const uint8_t v = page_meta[page_index].flags.load(std::memory_order_acquire);
 		return (v & static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Reserved)) != 0;
 	}
 
@@ -175,7 +175,7 @@ namespace
 			}
 
 			const uint8_t desired = static_cast<uint8_t>(expected & static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Allocated));
-			if (page_meta[page_index].flags.compare_exchange_weak(expected, desired, std::memory_order_relaxed, std::memory_order_relaxed))
+			if (page_meta[page_index].flags.compare_exchange_weak(expected, desired, std::memory_order_release, std::memory_order_relaxed))
 			{
 				return true;
 			}
