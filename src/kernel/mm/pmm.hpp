@@ -14,6 +14,7 @@ namespace kernel::mm::pmm
 		Reserved = 1 << 0,
 		Allocated = 1 << 1,
 		BuddyHead = 1 << 2,
+		PcpCached = 1 << 3,
 	};
 
 	inline PageFlags operator|(PageFlags a, PageFlags b) noexcept
