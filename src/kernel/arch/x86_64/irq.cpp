@@ -19,7 +19,7 @@ namespace kernel::arch::x86_64::irq
 		handlers[irq] = handler;
 	}
 
-	void dispatch(uint8_t irq, kernel::arch::x86_64::InterruptFrame* frame) noexcept
+	void dispatch(uint8_t irq, kernel::arch::x86_64::InterruptFrameView* frame) noexcept
 	{
 		if (irq < 16)
 		{

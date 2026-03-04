@@ -4,6 +4,13 @@
 
 namespace kernel::arch::x86_64
 {
+	struct [[gnu::packed]] InterruptFrameView
+	{
+		uint64_t rip;
+		uint64_t cs;
+		uint64_t rflags;
+	};
+
 	struct [[gnu::packed]] InterruptFrame
 	{
 		uint64_t rip;

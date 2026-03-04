@@ -20,7 +20,7 @@ namespace
 	std::atomic<uint64_t> tick_counter{0};
 	uint32_t active_frequency_hz = 0;
 
-	void on_irq0(kernel::arch::x86_64::InterruptFrame*) noexcept
+	void on_irq0(kernel::arch::x86_64::InterruptFrameView*) noexcept
 	{
 		tick_counter.fetch_add(1, std::memory_order_relaxed);
 	}
