@@ -37,6 +37,10 @@ SECTIONS
 
 	.rodata : AT(KERNEL_LMA_BASE + (ADDR(.rodata) - KERNEL_VMA))
 	{
+		__init_array_start = .;
+		KEEP(*(.init_array .init_array.*))
+		__init_array_end = .;
+
 		*(.rodata .rodata.*)
 	} :rodata
 

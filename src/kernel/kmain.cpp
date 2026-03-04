@@ -25,6 +25,8 @@
 #include "kernel/mm/vmm.hpp"
 #include "kernel/mm/heap.hpp"
 
+#include "kernel/runtime/init_array.hpp"
+
 extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 {
 	kernel::console::vga::clear();
@@ -88,6 +90,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 		kernel::mm::pmm::set_alloc_limit(~0ull);
 		kernel::mm::ioremap::init();
 		kernel::mm::heap::init();
+		kernel::runtime::init_global_constructors();
 
 		constexpr uint64_t test_virt = 0xFFFFFE0000100000ull;
 		const uint64_t test_phys = kernel::mm::pmm::alloc_page();
