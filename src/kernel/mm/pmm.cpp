@@ -22,11 +22,9 @@ namespace
 	constexpr uint64_t early_mapped_limit = 0x100000000ull;
 	constexpr uint32_t max_apic_id = 256;
 	constexpr uint32_t pcp_capacity = 64;
+	constexpr uint32_t null_page_index = ~0u;
 
-	uint8_t* bitmap = nullptr;
-	uint8_t* free_block_order = nullptr;
-	uint64_t bitmap_bytes = 0;
-	uint64_t free_block_order_bytes = 0;
+	kernel::mm::pmm::PageMetadata* page_meta = nullptr;
 	uint64_t page_count = 0;
 	uint32_t max_order = 0;
 
@@ -34,14 +32,7 @@ namespace
 	uint64_t alloc_limit_bytes = early_mapped_limit;
 	kernel::lib::McsLock pmm_lock;
 
-	struct FreeNode
-	{
-		uint64_t next_page;
-		uint64_t prev_page;
-	};
-
-	constexpr uint64_t null_page = ~0ull;
-	uint64_t free_list_head[64]{};
+	uint32_t free_list_head[64]{};
 	kernel::lib::McsLock buddy_lock[64]{};
 
 	struct PerCpuCache
@@ -52,91 +43,66 @@ namespace
 
 	PerCpuCache pcp[max_apic_id]{};
 
-	void bitmap_set(uint64_t page_index) noexcept
-	{
-		bitmap[page_index / 8] |= static_cast<uint8_t>(1u << (page_index % 8));
-	}
-
-	void bitmap_clear(uint64_t page_index) noexcept
-	{
-		bitmap[page_index / 8] &= static_cast<uint8_t>(~(1u << (page_index % 8)));
-	}
-
-	bool bitmap_test(uint64_t page_index) noexcept
-	{
-		return (bitmap[page_index / 8] & static_cast<uint8_t>(1u << (page_index % 8))) != 0;
-	}
-
 	uint32_t current_cpu_index() noexcept
 	{
 		return kernel::arch::x86_64::cpu_local::cpu_id();
-	}
-
-	FreeNode* node(uint64_t page_index) noexcept
-	{
-		const uint64_t phys = page_index * page_size;
-		return static_cast<FreeNode*>(kernel::mm::physmap::to_virt(phys));
-	}
-
-	const FreeNode* node_const(uint64_t page_index) noexcept
-	{
-		const uint64_t phys = page_index * page_size;
-		return static_cast<const FreeNode*>(kernel::mm::physmap::to_virt(phys));
 	}
 
 	void list_init() noexcept
 	{
 		for (uint32_t i = 0; i < 64; ++i)
 		{
-			free_list_head[i] = null_page;
+			free_list_head[i] = null_page_index;
 		}
 	}
 
-	void list_push(uint32_t order, uint64_t page_index) noexcept
+	void list_push_meta(uint32_t order, uint32_t page_index) noexcept
 	{
-		auto* n = node(page_index);
-		n->prev_page = null_page;
-		n->next_page = free_list_head[order];
-		if (free_list_head[order] != null_page)
+		auto* meta = &page_meta[page_index];
+		meta->prev_page = null_page_index;
+		meta->next_page = free_list_head[order];
+
+		if (free_list_head[order] != null_page_index)
 		{
-			node(free_list_head[order])->prev_page = page_index;
+			page_meta[free_list_head[order]].prev_page = page_index;
 		}
+
 		free_list_head[order] = page_index;
 	}
 
-	void list_remove(uint32_t order, uint64_t page_index) noexcept
+	void list_remove_meta(uint32_t order, uint32_t page_index) noexcept
 	{
-		auto* n = node(page_index);
-		const uint64_t prev = n->prev_page;
-		const uint64_t next = n->next_page;
+		auto* meta = &page_meta[page_index];
+		const uint32_t prev = meta->prev_page;
+		const uint32_t next = meta->next_page;
 
-		if (prev != null_page)
+		if (prev != null_page_index)
 		{
-			node(prev)->next_page = next;
+			page_meta[prev].next_page = next;
 		}
 		else
 		{
 			free_list_head[order] = next;
 		}
 
-		if (next != null_page)
+		if (next != null_page_index)
 		{
-			node(next)->prev_page = prev;
+			page_meta[next].prev_page = prev;
 		}
 
-		n->prev_page = null_page;
-		n->next_page = null_page;
+		meta->prev_page = null_page_index;
+		meta->next_page = null_page_index;
 	}
 
-	uint64_t list_pop(uint32_t order) noexcept
+	uint32_t list_pop_meta(uint32_t order) noexcept
 	{
-		const uint64_t head = free_list_head[order];
-		if (head == null_page)
+		const uint32_t head = free_list_head[order];
+		if (head == null_page_index)
 		{
-			return null_page;
+			return null_page_index;
 		}
 
-		list_remove(order, head);
+		list_remove_meta(order, head);
 		return head;
 	}
 
@@ -155,46 +121,76 @@ namespace
 		return order;
 	}
 
-	uint32_t block_order_at(uint64_t page_index) noexcept
+	bool is_allocated(uint32_t page_index) noexcept
 	{
-		return free_block_order[page_index];
+		return (page_meta[page_index].flags & kernel::mm::pmm::PageFlags::Allocated) != kernel::mm::pmm::PageFlags::None;
 	}
 
-	void set_block_order(uint64_t page_index, uint32_t order) noexcept
+	void set_allocated(uint32_t page_index) noexcept
 	{
-		free_block_order[page_index] = static_cast<uint8_t>(order);
+		page_meta[page_index].flags |= kernel::mm::pmm::PageFlags::Allocated;
 	}
 
-	void clear_block_order(uint64_t page_index) noexcept
+	void clear_allocated(uint32_t page_index) noexcept
 	{
-		free_block_order[page_index] = 0xFFu;
+		page_meta[page_index].flags &= ~kernel::mm::pmm::PageFlags::Allocated;
 	}
 
-	void add_free_block(uint64_t page_index, uint32_t order) noexcept
+	bool is_reserved(uint32_t page_index) noexcept
 	{
-		set_block_order(page_index, order);
-		list_push(order, page_index);
+		return (page_meta[page_index].flags & kernel::mm::pmm::PageFlags::Reserved) != kernel::mm::pmm::PageFlags::None;
 	}
 
-	uint64_t alloc_block(uint32_t order) noexcept
+	void set_reserved(uint32_t page_index) noexcept
+	{
+		page_meta[page_index].flags |= kernel::mm::pmm::PageFlags::Reserved;
+	}
+
+	void clear_reserved(uint32_t page_index) noexcept
+	{
+		page_meta[page_index].flags &= ~kernel::mm::pmm::PageFlags::Reserved;
+	}
+
+	uint8_t get_order_meta(uint32_t page_index) noexcept
+	{
+		return page_meta[page_index].order;
+	}
+
+	void set_order_meta(uint32_t page_index, uint8_t order) noexcept
+	{
+		page_meta[page_index].order = order;
+	}
+
+	void clear_order_meta(uint32_t page_index) noexcept
+	{
+		page_meta[page_index].order = 0xFF;
+	}
+
+	void add_free_block(uint32_t page_index, uint32_t order) noexcept
+	{
+		set_order_meta(page_index, static_cast<uint8_t>(order));
+		list_push_meta(order, page_index);
+	}
+
+	uint32_t alloc_block(uint32_t order) noexcept
 	{
 		for (uint32_t o = order; o <= max_order; ++o)
 		{
 			kernel::lib::IrqMcsLockGuard guard(buddy_lock[o], *kernel::arch::x86_64::cpu_local::mcs_node());
-			const uint64_t block = list_pop(o);
-			if (block == null_page)
+			const uint32_t block = list_pop_meta(o);
+			if (block == null_page_index)
 			{
 				continue;
 			}
 
-			clear_block_order(block);
+			clear_order_meta(block);
 
-			uint64_t current = block;
+			uint32_t current = block;
 			uint32_t current_order = o;
 			while (current_order > order)
 			{
 				--current_order;
-				const uint64_t split = current + (1ull << current_order);
+				const uint32_t split = current + (1u << current_order);
 				{
 					kernel::lib::IrqMcsLockGuard split_guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node2());
 					add_free_block(split, current_order);
@@ -204,19 +200,19 @@ namespace
 			return current;
 		}
 
-		return null_page;
+		return null_page_index;
 	}
 
-	bool alloc_block_at(uint64_t target_page) noexcept
+	bool alloc_block_at(uint32_t target_page) noexcept
 	{
 		uint32_t found_order = 0;
 		bool found = false;
-		uint64_t block_start = 0;
+		uint32_t block_start = 0;
 
 		for (uint32_t order = 0; order <= max_order; ++order)
 		{
-			const uint64_t mask = (1ull << order) - 1;
-			const uint64_t start = target_page & ~mask;
+			const uint32_t mask = (1u << order) - 1;
+			const uint32_t start = target_page & ~mask;
 			if (start >= page_count)
 			{
 				continue;
@@ -224,7 +220,7 @@ namespace
 
 			{
 				kernel::lib::IrqMcsLockGuard guard(buddy_lock[order], *kernel::arch::x86_64::cpu_local::mcs_node());
-				if (block_order_at(start) == order)
+				if (get_order_meta(start) == order)
 				{
 					found = true;
 					found_order = order;
@@ -240,24 +236,24 @@ namespace
 
 		{
 			kernel::lib::IrqMcsLockGuard guard(buddy_lock[found_order], *kernel::arch::x86_64::cpu_local::mcs_node());
-			if (block_order_at(block_start) != found_order)
+			if (get_order_meta(block_start) != found_order)
 			{
 				return false;
 			}
-			list_remove(found_order, block_start);
-			clear_block_order(block_start);
+			list_remove_meta(found_order, block_start);
+			clear_order_meta(block_start);
 		}
 
-		uint64_t current = block_start;
+		uint32_t current = block_start;
 		uint32_t current_order = found_order;
 		while (current_order > 0)
 		{
 			--current_order;
-			const uint64_t half = 1ull << current_order;
-			const uint64_t right = current + half;
+			const uint32_t half = 1u << current_order;
+			const uint32_t right = current + half;
 			const bool target_in_right = target_page >= right;
-			const uint64_t free_half = target_in_right ? current : right;
-			const uint64_t keep_half = target_in_right ? right : current;
+			const uint32_t free_half = target_in_right ? current : right;
+			const uint32_t keep_half = target_in_right ? right : current;
 
 			{
 				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node2());
@@ -270,14 +266,14 @@ namespace
 		return current == target_page;
 	}
 
-	void free_block(uint64_t page_index, uint32_t order) noexcept
+	void free_block(uint32_t page_index, uint32_t order) noexcept
 	{
-		uint64_t current = page_index;
+		uint32_t current = page_index;
 		uint32_t current_order = order;
 
 		while (current_order < max_order)
 		{
-			const uint64_t buddy = current ^ (1ull << current_order);
+			const uint32_t buddy = current ^ (1u << current_order);
 			if (buddy >= page_count)
 			{
 				break;
@@ -285,12 +281,12 @@ namespace
 
 			{
 				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node());
-				if (block_order_at(buddy) != current_order)
+				if (get_order_meta(buddy) != current_order)
 				{
 					break;
 				}
-				list_remove(current_order, buddy);
-				clear_block_order(buddy);
+				list_remove_meta(current_order, buddy);
+				clear_order_meta(buddy);
 			}
 
 			current = buddy < current ? buddy : current;
@@ -303,17 +299,17 @@ namespace
 		}
 	}
 
-	void add_free_range(uint64_t start_page, uint64_t len_pages) noexcept
+	void add_free_range(uint32_t start_page, uint32_t len_pages) noexcept
 	{
-		uint64_t page = start_page;
-		uint64_t remaining = len_pages;
+		uint32_t page = start_page;
+		uint32_t remaining = len_pages;
 
 		while (remaining > 0)
 		{
 			uint32_t order = 0;
 			while (order < max_order)
 			{
-				const uint64_t size = 1ull << (order + 1);
+				const uint32_t size = 1u << (order + 1);
 				if ((page & (size - 1)) != 0)
 				{
 					break;
@@ -330,19 +326,14 @@ namespace
 				add_free_block(page, order);
 			}
 
-			const uint64_t step = 1ull << order;
+			const uint32_t step = 1u << order;
 			page += step;
 			remaining -= step;
 		}
 	}
 
-	void build_buddy_from_bitmap() noexcept
+	void build_buddy_from_metadata() noexcept
 	{
-		for (uint64_t i = 0; i < page_count; ++i)
-		{
-			free_block_order[i] = 0xFFu;
-		}
-
 		list_init();
 		max_order = compute_max_order(page_count);
 		if (max_order >= 63)
@@ -350,12 +341,12 @@ namespace
 			max_order = 63;
 		}
 
-		uint64_t run_start = 0;
-		uint64_t run_len = 0;
+		uint32_t run_start = 0;
+		uint32_t run_len = 0;
 
-		for (uint64_t i = 0; i < page_count; ++i)
+		for (uint32_t i = 0; i < page_count; ++i)
 		{
-			const bool is_free = !bitmap_test(i);
+			const bool is_free = !is_reserved(i) && !is_allocated(i);
 			if (is_free)
 			{
 				if (run_len == 0)
@@ -425,64 +416,33 @@ namespace
 		return false;
 	}
 
-	void bitmap_clear_range(uint64_t start_page, uint64_t page_len) noexcept
+	void mark_available_range(uint32_t start_page, uint32_t len_pages) noexcept
 	{
-		if (page_len == 0)
+		for (uint32_t i = start_page; i < start_page + len_pages && i < page_count; ++i)
 		{
-			return;
+			clear_reserved(i);
+			clear_allocated(i);
+			clear_order_meta(i);
 		}
-
-		const uint64_t end_page = start_page + page_len;
-		uint64_t page = start_page;
-
-		while (page < end_page && (page % 8) != 0)
-		{
-			if (bitmap_test(page))
-			{
-				bitmap_clear(page);
-				++free_pages;
-			}
-			++page;
-		}
-
-		while (page + 8 <= end_page)
-		{
-			const uint64_t byte_index = page / 8;
-			if (bitmap[byte_index] != 0)
-			{
-				free_pages += static_cast<uint64_t>(kernel::lib::popcount_u8(bitmap[byte_index]));
-				bitmap[byte_index] = 0;
-			}
-			page += 8;
-		}
-
-		while (page < end_page)
-		{
-			if (bitmap_test(page))
-			{
-				bitmap_clear(page);
-				++free_pages;
-			}
-			++page;
-		}
+		free_pages += len_pages;
 	}
 
-	void reserve_range(uint64_t start, uint64_t end) noexcept
+	void mark_reserved_range(uint64_t start, uint64_t end) noexcept
 	{
 		const uint64_t s = kernel::lib::align_down(start, page_size);
 		const uint64_t e = kernel::lib::align_up(end, page_size);
 
 		for (uint64_t addr = s; addr < e; addr += page_size)
 		{
-			const uint64_t index = addr / page_size;
+			const uint32_t index = static_cast<uint32_t>(addr / page_size);
 			if (index >= page_count)
 			{
 				break;
 			}
 
-			if (!bitmap_test(index))
+			if (!is_reserved(index) && !is_allocated(index))
 			{
-				bitmap_set(index);
+				set_reserved(index);
 				if (free_pages > 0)
 				{
 					--free_pages;
@@ -515,11 +475,11 @@ namespace
 				continue;
 			}
 
-			const uint64_t start_page = start / page_size;
-			uint64_t end_page = end / page_size;
+			const uint32_t start_page = static_cast<uint32_t>(start / page_size);
+			uint32_t end_page = static_cast<uint32_t>(end / page_size);
 			if (end_page > page_count)
 			{
-				end_page = page_count;
+				end_page = static_cast<uint32_t>(page_count);
 			}
 
 			if (end_page <= start_page)
@@ -527,7 +487,7 @@ namespace
 				continue;
 			}
 
-			bitmap_clear_range(start_page, end_page - start_page);
+			mark_available_range(start_page, end_page - start_page);
 		}
 	}
 
@@ -557,15 +517,15 @@ namespace
 
 	uint64_t kernel_phys_start() noexcept
 	{
-		return reinterpret_cast<uint64_t>(&:: __kernel_phys_start);
+		return reinterpret_cast<uint64_t>(&::__kernel_phys_start);
 	}
 
 	uint64_t kernel_phys_end() noexcept
 	{
-		return reinterpret_cast<uint64_t>(&:: __kernel_phys_end);
+		return reinterpret_cast<uint64_t>(&::__kernel_phys_end);
 	}
 
-	uint64_t place_bitmap(const kernel::boot::multiboot2::Reader& multiboot, uint64_t bytes) noexcept
+	uint64_t place_metadata(const kernel::boot::multiboot2::Reader& multiboot, uint64_t bytes) noexcept
 	{
 		const uint64_t start_hint = kernel::lib::align_up(kernel_phys_end(), page_size);
 		const auto count = multiboot.memory_map_entry_count();
@@ -634,15 +594,35 @@ namespace
 
 		return 0;
 	}
-
-	uint64_t place_metadata(const kernel::boot::multiboot2::Reader& multiboot, uint64_t bytes) noexcept
-	{
-		return place_bitmap(multiboot, bytes);
-	}
 }
 
 namespace kernel::mm::pmm
 {
+	PageMetadata* page_metadata_base() noexcept
+	{
+		return page_meta;
+	}
+
+	PageMetadata* page_metadata(uint64_t phys_addr) noexcept
+	{
+		const uint32_t index = static_cast<uint32_t>(phys_addr / page_size);
+		if (index >= page_count)
+		{
+			return nullptr;
+		}
+		return &page_meta[index];
+	}
+
+	const PageMetadata* page_metadata_const(uint64_t phys_addr) noexcept
+	{
+		const uint32_t index = static_cast<uint32_t>(phys_addr / page_size);
+		if (index >= page_count)
+		{
+			return nullptr;
+		}
+		return &page_meta[index];
+	}
+
 	void init(const kernel::boot::multiboot2::Reader& multiboot) noexcept
 	{
 		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
@@ -650,12 +630,8 @@ namespace kernel::mm::pmm
 		const uint64_t max_addr = find_max_address(multiboot);
 		page_count = kernel::lib::align_up(max_addr, page_size) / page_size;
 
-		bitmap_bytes = kernel::lib::align_up((page_count + 7) / 8, page_size);
-		free_block_order_bytes = kernel::lib::align_up(page_count, page_size);
-		const uint64_t metadata_bytes = bitmap_bytes + free_block_order_bytes;
+		const uint64_t metadata_bytes = page_count * sizeof(PageMetadata);
 		const uint64_t metadata_phys = place_metadata(multiboot, metadata_bytes);
-		const uint64_t bitmap_phys = metadata_phys;
-		const uint64_t free_block_order_phys = metadata_phys + bitmap_bytes;
 
 		if (metadata_phys == 0)
 		{
@@ -667,9 +643,7 @@ namespace kernel::mm::pmm
 
 			kernel::log::write("pmm start_hint=");
 			kernel::log::write_u64_hex(kernel::lib::align_up(kernel_phys_end(), page_size));
-			kernel::log::write(" bitmap_bytes=");
-			kernel::log::write_u64_hex(bitmap_bytes);
-			kernel::log::write(" meta_bytes=");
+			kernel::log::write(" metadata_bytes=");
 			kernel::log::write_u64_hex(metadata_bytes);
 			kernel::log::write("\n", 1);
 
@@ -703,27 +677,23 @@ namespace kernel::mm::pmm
 			}
 		}
 
-		bitmap = static_cast<uint8_t*>(kernel::mm::physmap::to_virt(bitmap_phys));
-		free_block_order = static_cast<uint8_t*>(kernel::mm::physmap::to_virt(free_block_order_phys));
-		for (uint64_t i = 0; i < bitmap_bytes; ++i)
-		{
-			bitmap[i] = 0xFF;
-		}
+		page_meta = static_cast<PageMetadata*>(kernel::mm::physmap::to_virt(metadata_phys));
 
-		for (uint64_t i = 0; i < free_block_order_bytes; ++i)
+		for (uint64_t i = 0; i < page_count; ++i)
 		{
-			free_block_order[i] = 0xFFu;
+			new (&page_meta[i]) PageMetadata();
+			set_reserved(static_cast<uint32_t>(i));
 		}
 
 		free_pages = 0;
 		alloc_limit_bytes = early_mapped_limit;
 		unreserve_available(multiboot);
 
-		reserve_range(0, page_size);
-		reserve_range(kernel_phys_start(), kernel_phys_end());
-		reserve_range(metadata_phys, metadata_phys + metadata_bytes);
+		mark_reserved_range(0, page_size);
+		mark_reserved_range(kernel_phys_start(), kernel_phys_end());
+		mark_reserved_range(metadata_phys, metadata_phys + metadata_bytes);
 
-		build_buddy_from_bitmap();
+		build_buddy_from_metadata();
 
 		kernel::log::write("pmm pages total=");
 		kernel::log::write_u64_dec(page_count);
@@ -731,14 +701,10 @@ namespace kernel::mm::pmm
 		kernel::log::write_u64_dec(free_pages);
 		kernel::log::write(" limit=");
 		kernel::log::write_u64_hex(alloc_limit_bytes);
-		kernel::log::write(" bitmap=");
-		kernel::log::write_u64_hex(bitmap_phys);
-		kernel::log::write(" bytes=");
-		kernel::log::write_u64_dec(bitmap_bytes);
-		kernel::log::write(" ordermap=");
-		kernel::log::write_u64_hex(free_block_order_phys);
-		kernel::log::write(" ordermap_bytes=");
-		kernel::log::write_u64_dec(free_block_order_bytes);
+		kernel::log::write(" metadata=");
+		kernel::log::write_u64_hex(metadata_phys);
+		kernel::log::write(" metadata_bytes=");
+		kernel::log::write_u64_dec(metadata_bytes);
 		kernel::log::write("\n", 1);
 	}
 
@@ -770,11 +736,11 @@ namespace kernel::mm::pmm
 		uint64_t cached = 0;
 		if (pcp_pop(cached))
 		{
-			kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
-			const uint64_t index = cached / page_size;
-			if (index < page_count && !bitmap_test(index) && cached < alloc_limit_bytes)
+			const uint32_t index = static_cast<uint32_t>(cached / page_size);
+			if (index < page_count && !is_allocated(index) && !is_reserved(index) && cached < alloc_limit_bytes)
 			{
-				bitmap_set(index);
+				kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+				set_allocated(index);
 				if (free_pages > 0)
 				{
 					--free_pages;
@@ -784,66 +750,19 @@ namespace kernel::mm::pmm
 		}
 
 		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
-		const uint64_t limit_pages = alloc_limit_bytes / page_size;
-		const uint64_t search_pages = limit_pages < page_count ? limit_pages : page_count;
-		if (search_pages == 0)
+
+		const uint32_t block = alloc_block(0);
+		if (block == null_page_index)
 		{
 			return 0;
 		}
 
-		if (alloc_limit_bytes == ~0ull)
+		set_allocated(block);
+		if (free_pages > 0)
 		{
-			const uint64_t block = alloc_block(0);
-			if (block == null_page)
-			{
-				return 0;
-			}
-
-			bitmap_set(block);
-			if (free_pages > 0)
-			{
-				--free_pages;
-			}
-			return block * page_size;
+			--free_pages;
 		}
-
-		for (uint32_t order = 0; order <= max_order; ++order)
-		{
-			kernel::lib::IrqMcsLockGuard order_guard(buddy_lock[order], *kernel::arch::x86_64::cpu_local::mcs_node2());
-			uint64_t it = free_list_head[order];
-			while (it != null_page)
-			{
-				const uint64_t block_pages = 1ull << order;
-				if (it + block_pages <= search_pages)
-				{
-					list_remove(order, it);
-					clear_block_order(it);
-
-					uint64_t current = it;
-					uint32_t current_order = order;
-					while (current_order > 0)
-					{
-						--current_order;
-						const uint64_t split = current + (1ull << current_order);
-						{
-							kernel::lib::IrqMcsLockGuard split_guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node());
-							add_free_block(split, current_order);
-						}
-					}
-
-					bitmap_set(current);
-					if (free_pages > 0)
-					{
-						--free_pages;
-					}
-					return current * page_size;
-				}
-
-				it = node_const(it)->next_page;
-			}
-		}
-
-		return 0;
+		return static_cast<uint64_t>(block) * page_size;
 	}
 
 	uint64_t alloc_page_at(uint64_t phys_addr) noexcept
@@ -860,13 +779,13 @@ namespace kernel::mm::pmm
 			return 0;
 		}
 
-		const uint64_t index = phys_addr / page_size;
+		const uint32_t index = static_cast<uint32_t>(phys_addr / page_size);
 		if (index >= page_count)
 		{
 			return 0;
 		}
 
-		if (bitmap_test(index))
+		if (is_allocated(index) || is_reserved(index))
 		{
 			return 0;
 		}
@@ -876,7 +795,7 @@ namespace kernel::mm::pmm
 			return 0;
 		}
 
-		bitmap_set(index);
+		set_allocated(index);
 		if (free_pages > 0)
 		{
 			--free_pages;
@@ -892,7 +811,7 @@ namespace kernel::mm::pmm
 			return;
 		}
 
-		const uint64_t index = phys_addr / page_size;
+		const uint32_t index = static_cast<uint32_t>(phys_addr / page_size);
 		if (index >= page_count)
 		{
 			return;
@@ -900,12 +819,12 @@ namespace kernel::mm::pmm
 
 		{
 			kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
-			if (!bitmap_test(index))
+			if (!is_allocated(index))
 			{
 				return;
 			}
 
-			bitmap_clear(index);
+			clear_allocated(index);
 			++free_pages;
 		}
 
