@@ -40,10 +40,24 @@ namespace kernel::lib
 
 		void lock() noexcept
 		{
+			uint32_t backoff = 1;
 			for (;;)
 			{
-				bool expected = false;
-				if (__atomic_compare_exchange_n(&locked_, &expected, true, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+				while (__atomic_load_n(&locked_, __ATOMIC_RELAXED) != 0)
+				{
+					for (uint32_t i = 0; i < backoff; ++i)
+					{
+						asm volatile("pause");
+					}
+
+					if (backoff < 1024)
+					{
+						backoff <<= 1;
+					}
+				}
+
+				uint8_t expected = 0;
+				if (__atomic_compare_exchange_n(&locked_, &expected, static_cast<uint8_t>(1), false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 				{
 					return;
 				}
@@ -54,22 +68,23 @@ namespace kernel::lib
 
 		bool try_lock() noexcept
 		{
-			bool expected = false;
-			return __atomic_compare_exchange_n(&locked_, &expected, true, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+			uint8_t expected = 0;
+			return __atomic_compare_exchange_n(&locked_, &expected, static_cast<uint8_t>(1), false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
 		}
 
 		void unlock() noexcept
 		{
-			__atomic_store_n(&locked_, false, __ATOMIC_RELEASE);
+			__atomic_store_n(&locked_, static_cast<uint8_t>(0), __ATOMIC_RELEASE);
 		}
 
 		bool is_locked() const noexcept
 		{
-			return __atomic_load_n(&locked_, __ATOMIC_RELAXED);
+			return __atomic_load_n(&locked_, __ATOMIC_RELAXED) != 0;
 		}
 
 	private:
-		bool locked_ = false;
+		alignas(64) uint8_t locked_ = 0;
+		uint8_t padding_[63] = {};
 	};
 
 	template<typename Lock>
