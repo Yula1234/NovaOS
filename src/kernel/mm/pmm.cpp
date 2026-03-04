@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/arch/x86_64/cpu.hpp"
+#include "kernel/arch/x86_64/cpu_local.hpp"
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/log/log.hpp"
 #include "kernel/mm/physmap.hpp"
@@ -68,8 +69,7 @@ namespace
 
 	uint32_t current_cpu_index() noexcept
 	{
-		const uint32_t id = kernel::arch::x86_64::apic::lapic::id();
-		return id & 0xFFu;
+		return kernel::arch::x86_64::cpu_local::cpu_id();
 	}
 
 	FreeNode* node(uint64_t page_index) noexcept

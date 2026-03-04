@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/arch/x86_64/cpu.hpp"
+#include "kernel/arch/x86_64/cpu_local.hpp"
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "lib/align.hpp"
 #include "lib/lock.hpp"
@@ -196,7 +197,7 @@ namespace
 
 	uint32_t cpu_index() noexcept
 	{
-		return kernel::arch::x86_64::apic::lapic::id() & 0xFFu;
+		return kernel::arch::x86_64::cpu_local::cpu_id();
 	}
 
 	uint64_t slab_header_addr(uint64_t page_virt) noexcept

@@ -7,6 +7,7 @@
 #include "kernel/serial/com1.hpp"
 
 #include "kernel/arch/x86_64/cpu.hpp"
+#include "kernel/arch/x86_64/cpu_local.hpp"
 #include "kernel/arch/x86_64/gdt.hpp"
 #include "kernel/arch/x86_64/idt.hpp"
 #include "kernel/arch/x86_64/interrupts.hpp"
@@ -37,6 +38,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 	kernel::log::set_sink(multi_sink);
 
 	kernel::arch::x86_64::gdt::init_bsp();
+	kernel::arch::x86_64::cpu_local::init_bsp();
 	kernel::arch::x86_64::idt::init();
 	kernel::arch::x86_64::enable_nx();
 

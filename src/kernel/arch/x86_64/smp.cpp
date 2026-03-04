@@ -6,6 +6,7 @@
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/apic/timer.hpp"
 #include "kernel/arch/x86_64/cpu.hpp"
+#include "kernel/arch/x86_64/cpu_local.hpp"
 #include "kernel/arch/x86_64/gdt.hpp"
 #include "kernel/arch/x86_64/idt.hpp"
 #include "kernel/log/log.hpp"
@@ -161,6 +162,10 @@ namespace
 
 	extern "C" void ap_main(TrampolineMailbox* mailbox) noexcept
 	{
+		const uint8_t apic_id = kernel::arch::x86_64::apic::lapic::id() & 0xFFu;
+
+		kernel::arch::x86_64::cpu_local::init_ap(apic_id);
+
 		if (mailbox)
 		{
 			mailbox->stage = 100;
@@ -189,7 +194,6 @@ namespace
 			mailbox->stage = 104;
 		}
 
-		const uint8_t apic_id = kernel::arch::x86_64::apic::lapic::id() & 0xFFu;
 		::smp_ap_mailbox_ptrs[apic_id] = reinterpret_cast<uint64_t>(mailbox);
 
 		const auto go = reinterpret_cast<std::atomic<uint32_t>*>(mailbox ? mailbox->go_ptr : 0);

@@ -69,6 +69,8 @@ macro CALL_DISPATCH
 
 macro GEN_ISR vec
 {
+	local .kernel_entry, .kernel_exit
+
 	align 16
 	isr_stub_#vec:
 	cld
@@ -82,11 +84,29 @@ macro GEN_ISR vec
 	end if
 
 	push vec
-		PUSH_GPRS
-		CALL_DISPATCH
-		POP_GPRS
-		add rsp, 16
-		iretq
+
+	mov r11, [rsp + 24]
+	and r11, 0x3
+	cmp r11, 0x3
+	jne .kernel_entry
+
+	swapgs
+
+.kernel_entry:
+	PUSH_GPRS
+	CALL_DISPATCH
+	POP_GPRS
+
+	mov r11, [rsp + 144]
+	and r11, 0x3
+	cmp r11, 0x3
+	jne .kernel_exit
+
+	swapgs
+
+.kernel_exit:
+	add rsp, 16
+	iretq
 }
 
 macro GEN_PTR vec
