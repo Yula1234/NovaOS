@@ -77,9 +77,8 @@ namespace kernel::arch::x86_64::cpu_local
 
 	CpuLocalData* get() noexcept
 	{
-		CpuLocalData* ptr;
-		asm volatile("mov %%gs:0, %0" : "=r"(ptr));
-		return ptr;
+		constexpr uint32_t ia32_gs_base = 0xC0000101u;
+		return reinterpret_cast<CpuLocalData*>(kernel::arch::x86_64::rdmsr(ia32_gs_base));
 	}
 
 	uint32_t cpu_id() noexcept
