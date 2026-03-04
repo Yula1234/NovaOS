@@ -8,6 +8,15 @@ namespace
 	kernel::log::Sink* active_sink = &null_sink;
 	kernel::lib::McsLock log_lock;
 
+	void write_unlocked(const char* s, size_t len) noexcept
+	{
+		if (!s || len == 0)
+		{
+			return;
+		}
+		active_sink->write(s, len);
+	}
+
 	void write_char_unlocked(char c) noexcept
 	{
 		active_sink->write(&c, 1);
@@ -30,8 +39,6 @@ namespace kernel::log
 
 	void write(const char* s) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(log_lock);
-
 		if (!s)
 		{
 			return;
@@ -43,25 +50,32 @@ namespace kernel::log
 			++len;
 		}
 
-		active_sink->write(s, len);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
+		write_unlocked(s, len);
 	}
 
 	void write(const char* s, size_t len) noexcept
 	{
 		kernel::lib::IrqMcsLockGuard guard(log_lock);
+		write_unlocked(s, len);
+	}
 
+	void write_line(const char* s) noexcept
+	{
 		if (!s)
 		{
 			return;
 		}
 
-		active_sink->write(s, len);
-	}
+		size_t len = 0;
+		for (const char* p = s; *p; ++p)
+		{
+			++len;
+		}
 
-	void write_line(const char* s) noexcept
-	{
-		write(s);
-		write("\n", 1);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
+		write_unlocked(s, len);
+		write_char_unlocked('\n');
 	}
 
 	void write_u64_dec(uint64_t value) noexcept

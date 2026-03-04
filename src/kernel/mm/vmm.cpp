@@ -473,56 +473,67 @@ namespace kernel::mm::vmm
 			const uint64_t pdpt_phys = entry_addr(pml4e);
 			auto* pdpt = table_virt(pdpt_phys);
 			const uint64_t pdpte = pdpt[pdpt_i];
-			if (!entry_present(pdpte) || entry_is_large(pdpte))
+			if (!entry_present(pdpte))
 			{
 				return false;
 			}
 
-			const uint64_t pd_phys = entry_addr(pdpte);
-			auto* pd = table_virt(pd_phys);
-			const uint64_t pde = pd[pd_i];
-			if (!entry_present(pde))
+			if (entry_is_large(pdpte))
 			{
-				return false;
-			}
-
-			if (entry_is_large(pde))
-			{
-				pd[pd_i] = 0;
-
-				if (table_empty(pd_phys))
-				{
-					remove_table_if_empty(pdpt_phys, pdpt_i);
-				}
-
-				if (table_empty(pdpt_phys))
-				{
-					remove_table_if_empty(pml4_phys_, pml4_i);
-				}
+				pdpt[pdpt_i] = 0;
+				cleanup_empty_tables_after_pt_update(pml4_phys_, WalkPath4k{ pml4_i, pdpt_i, 0, 0, pdpt_phys, 0, 0 });
 
 				shoot_cr3 = pml4_phys_;
 				ok = true;
 			}
 			else
 			{
-				WalkPath4k path{};
-				if (!walk_to_pt_4k_existing(pml4_phys_, virt, path))
+				const uint64_t pd_phys = entry_addr(pdpte);
+				auto* pd = table_virt(pd_phys);
+				const uint64_t pde = pd[pd_i];
+				if (!entry_present(pde))
 				{
 					return false;
 				}
 
-				auto* pt = table_virt(path.pt_phys);
-				const uint64_t pte = pt[path.pt_i];
-				if (!entry_present(pte))
+				if (entry_is_large(pde))
 				{
-					return false;
+					pd[pd_i] = 0;
+
+					if (table_empty(pd_phys))
+					{
+						remove_table_if_empty(pdpt_phys, pdpt_i);
+					}
+
+					if (table_empty(pdpt_phys))
+					{
+						remove_table_if_empty(pml4_phys_, pml4_i);
+					}
+
+					shoot_cr3 = pml4_phys_;
+					ok = true;
 				}
+				else
+				{
+					WalkPath4k path{};
+					if (!walk_to_pt_4k_existing(pml4_phys_, virt, path))
+					{
+						return false;
+					}
 
-				pt[path.pt_i] = 0;
-				cleanup_empty_tables_after_pt_update(pml4_phys_, path);
+					auto* pt = table_virt(path.pt_phys);
+					const uint64_t pte = pt[path.pt_i];
+					if (!entry_present(pte))
+					{
+						return false;
+					}
 
-				shoot_cr3 = pml4_phys_;
-				ok = true;
+					pt[path.pt_i] = 0;
+					cleanup_empty_tables_after_pt_update(pml4_phys_, path);
+
+					shoot_cr3 = pml4_phys_;
+					ok = true;
+				}
 			}
 		}
 
@@ -634,6 +645,41 @@ namespace kernel::mm::vmm
 		return kernel_as;
 	}
 
+	bool rollback_range_mappings(uint64_t virt, uint64_t phys, uint64_t size) noexcept
+	{
+		uint64_t v = virt;
+		uint64_t p = phys;
+		uint64_t remaining = size;
+
+		while (remaining != 0)
+		{
+			if ((v % huge_page_size) == 0 && (p % huge_page_size) == 0 && remaining >= huge_page_size && kernel::arch::x86_64::pdpe1gb_supported())
+			{
+				kernel_as.unmap_page(v);
+				v += huge_page_size;
+				p += huge_page_size;
+				remaining -= huge_page_size;
+				continue;
+			}
+
+			if ((v % large_page_size) == 0 && (p % large_page_size) == 0 && remaining >= large_page_size)
+			{
+				kernel_as.unmap_page(v);
+				v += large_page_size;
+				p += large_page_size;
+				remaining -= large_page_size;
+				continue;
+			}
+
+			kernel_as.unmap_page(v);
+			v += page_size;
+			p += page_size;
+			remaining -= remaining >= page_size ? page_size : remaining;
+		}
+
+		return true;
+	}
+
 	bool map_range(uint64_t virt, uint64_t phys, uint64_t size, PageFlags flags) noexcept
 	{
 		if (size == 0)
@@ -645,12 +691,18 @@ namespace kernel::mm::vmm
 		uint64_t p = phys;
 		uint64_t remaining = size;
 
+		const uint64_t start_v = v;
+		const uint64_t start_p = p;
+		const uint64_t total_size = size;
+
 		while (remaining != 0)
 		{
 			if ((v % huge_page_size) == 0 && (p % huge_page_size) == 0 && remaining >= huge_page_size)
 			{
 				if (!map_large_1g(kernel_as, v, p, flags))
 				{
+					const uint64_t mapped = total_size - remaining;
+					rollback_range_mappings(start_v, start_p, mapped);
 					return false;
 				}
 
@@ -664,6 +716,8 @@ namespace kernel::mm::vmm
 			{
 				if (!map_large_2m(kernel_as, v, p, flags))
 				{
+					const uint64_t mapped = total_size - remaining;
+					rollback_range_mappings(start_v, start_p, mapped);
 					return false;
 				}
 
@@ -675,6 +729,8 @@ namespace kernel::mm::vmm
 
 			if (!kernel_as.map_page(v, p, flags))
 			{
+				const uint64_t mapped = total_size - remaining;
+				rollback_range_mappings(start_v, start_p, mapped);
 				return false;
 			}
 
