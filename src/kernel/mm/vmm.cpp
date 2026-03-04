@@ -231,7 +231,7 @@ namespace kernel::mm::vmm
 
 	void AddressSpace::reset(uint64_t pml4_phys) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
+		kernel::lib::IrqMcsLockGuard guard(lock_);
 		pml4_phys_ = pml4_phys & addr_mask;
 	}
 
@@ -242,7 +242,7 @@ namespace kernel::mm::vmm
 
 	bool AddressSpace::map_page(uint64_t virt, uint64_t phys, PageFlags flags) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
+		kernel::lib::IrqMcsLockGuard guard(lock_);
 
 		if ((virt % page_size) != 0 || (phys % page_size) != 0)
 		{
@@ -283,7 +283,7 @@ namespace kernel::mm::vmm
 
 	bool AddressSpace::unmap_page(uint64_t virt) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
+		kernel::lib::IrqMcsLockGuard guard(lock_);
 
 		if ((virt % page_size) != 0)
 		{
@@ -367,7 +367,7 @@ namespace kernel::mm::vmm
 
 	uint64_t AddressSpace::translate(uint64_t virt) const noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
+		kernel::lib::IrqMcsLockGuard guard(lock_);
 
 		const uint64_t offset = virt & (page_size - 1);
 

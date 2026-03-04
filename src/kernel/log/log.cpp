@@ -6,7 +6,7 @@ namespace
 {
 	kernel::log::NullSink null_sink;
 	kernel::log::Sink* active_sink = &null_sink;
-	kernel::lib::SpinLock log_lock;
+	kernel::lib::McsLock log_lock;
 
 	void write_char_unlocked(char c) noexcept
 	{
@@ -18,19 +18,19 @@ namespace kernel::log
 {
 	void set_sink(Sink& sink) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(log_lock);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
 		active_sink = &sink;
 	}
 
 	Sink& sink() noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(log_lock);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
 		return *active_sink;
 	}
 
 	void write(const char* s) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(log_lock);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
 
 		if (!s)
 		{
@@ -48,7 +48,7 @@ namespace kernel::log
 
 	void write(const char* s, size_t len) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(log_lock);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
 
 		if (!s)
 		{
@@ -66,7 +66,7 @@ namespace kernel::log
 
 	void write_u64_dec(uint64_t value) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(log_lock);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
 
 		char buf[32];
 		size_t i = 0;
@@ -92,7 +92,7 @@ namespace kernel::log
 
 	void write_u64_hex(uint64_t value, bool prefix) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(log_lock);
+		kernel::lib::IrqMcsLockGuard guard(log_lock);
 
 		if (prefix)
 		{

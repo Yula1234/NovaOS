@@ -46,7 +46,7 @@ namespace kernel::mm::vmm
 
 	private:
 		uint64_t pml4_phys_;
-		mutable kernel::lib::SpinLock lock_;
+		mutable kernel::lib::McsLock lock_;
 	};
 
 	void init() noexcept;

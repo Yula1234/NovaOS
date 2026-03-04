@@ -11,7 +11,7 @@ namespace
 {
 	constexpr uint64_t cr3_mask = 0x000FFFFFFFFFF000ull;
 
-	kernel::lib::SpinLock shoot_lock;
+	kernel::lib::McsLock shoot_lock;
 
 	std::atomic<uint64_t> shoot_seq{0};
 	std::atomic<uint32_t> shoot_acks{0};
@@ -80,7 +80,7 @@ namespace kernel::arch::x86_64::tlb
 			return;
 		}
 
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(shoot_lock);
+		kernel::lib::IrqMcsLockGuard guard(shoot_lock);
 
 		shoot_target_cr3.store(target_cr3_phys & cr3_mask, std::memory_order_relaxed);
 		shoot_virt.store(virt, std::memory_order_relaxed);
