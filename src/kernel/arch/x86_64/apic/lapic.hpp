@@ -27,6 +27,8 @@ namespace kernel::arch::x86_64::apic::lapic
 	void set_ipi_handler(void (*handler)() noexcept) noexcept;
 
 	void set_timer_handler(void (*handler)() noexcept) noexcept;
+	void handle_timer_vector() noexcept;
+	void handle_ipi_vector() noexcept;
 
 	void write_timer_div(uint32_t value) noexcept;
 	void write_lvt_timer(uint32_t value) noexcept;

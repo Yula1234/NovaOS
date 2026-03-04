@@ -1,7 +1,6 @@
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 
 #include "kernel/arch/x86_64/cpu.hpp"
-#include "kernel/arch/x86_64/interrupt_frame.hpp"
 #include "kernel/log/log.hpp"
 #include "kernel/mm/ioremap.hpp"
 
@@ -50,9 +49,8 @@ namespace
 		(void)read_reg(reg_esr);
 	}
 
-	[[gnu::interrupt]] void isr_timer(kernel::arch::x86_64::InterruptFrame*) noexcept
+	void handle_timer_vector() noexcept
 	{
-		asm volatile("cld" ::: "cc");
 		if (timer_handler)
 		{
 			timer_handler();
@@ -62,9 +60,8 @@ namespace
 		kernel::arch::x86_64::apic::lapic::eoi();
 	}
 
-	[[gnu::interrupt]] void isr_ipi(kernel::arch::x86_64::InterruptFrame*) noexcept
+	void handle_ipi_vector() noexcept
 	{
-		asm volatile("cld" ::: "cc");
 		if (ipi_handler)
 		{
 			ipi_handler();
@@ -253,6 +250,16 @@ namespace kernel::arch::x86_64::apic::lapic
 		timer_handler = handler;
 	}
 
+	void handle_timer_vector() noexcept
+	{
+		::handle_timer_vector();
+	}
+
+	void handle_ipi_vector() noexcept
+	{
+		::handle_ipi_vector();
+	}
+
 	void write_timer_div(uint32_t value) noexcept
 	{
 		write_reg(reg_timer_div, value);
@@ -275,11 +282,11 @@ namespace kernel::arch::x86_64::apic::lapic
 
 	void* timer_isr() noexcept
 	{
-		return reinterpret_cast<void*>(&isr_timer);
+		return nullptr;
 	}
 
 	void* ipi_isr() noexcept
 	{
-		return reinterpret_cast<void*>(&isr_ipi);
+		return nullptr;
 	}
 }

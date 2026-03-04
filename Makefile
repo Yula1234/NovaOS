@@ -38,7 +38,7 @@ kernel: $(KERNEL_ELF) $(KERNEL_BIN)
 
 $(BUILD_DIR)/obj/%.o: src/%.asm
 	@mkdir -p $(dir $@)
-	$(FASM) $< $@
+	$(FASM) $< $@ > /dev/null
 
 $(BUILD_DIR)/obj/%.o: src/%.cpp
 	@mkdir -p $(dir $@)
