@@ -1,5 +1,6 @@
 #include "kernel/mm/pmm.hpp"
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -22,17 +23,28 @@ namespace
 	constexpr uint32_t max_apic_id = 256;
 	constexpr uint32_t pcp_capacity = 64;
 	constexpr uint32_t null_page_index = ~0u;
+	constexpr uint64_t dma_limit_bytes = 16ull * 1024 * 1024;
+	constexpr uint32_t normal_zone_shards = 4;
+	constexpr uint32_t zone_count = 1 + normal_zone_shards;
 
 	kernel::mm::pmm::PageMetadata* page_meta = nullptr;
 	uint64_t page_count = 0;
 	uint32_t max_order = 0;
 
-	uint64_t free_pages = 0;
 	uint64_t alloc_limit_bytes = early_mapped_limit;
 	kernel::lib::McsLock pmm_lock;
 
-	uint32_t free_list_head[64]{};
-	kernel::lib::McsLock buddy_lock[64]{};
+	struct Zone
+	{
+		uint32_t start_page = 0;
+		uint32_t end_page = 0;
+
+		uint32_t free_list_head[64]{};
+		kernel::lib::McsLock buddy_lock[64]{};
+		std::atomic<uint64_t> free_pages{0};
+	};
+
+	Zone zones[zone_count]{};
 
 	struct PerCpuCache
 	{
@@ -47,29 +59,29 @@ namespace
 		return kernel::arch::x86_64::cpu_local::cpu_id();
 	}
 
-	void list_init() noexcept
+	void zone_list_init(Zone& z) noexcept
 	{
 		for (uint32_t i = 0; i < 64; ++i)
 		{
-			free_list_head[i] = null_page_index;
+			z.free_list_head[i] = null_page_index;
 		}
 	}
 
-	void list_push_meta(uint32_t order, uint32_t page_index) noexcept
+	void list_push_meta(Zone& z, uint32_t order, uint32_t page_index) noexcept
 	{
 		auto* meta = &page_meta[page_index];
 		meta->prev_page = null_page_index;
-		meta->next_page = free_list_head[order];
+		meta->next_page = z.free_list_head[order];
 
-		if (free_list_head[order] != null_page_index)
+		if (z.free_list_head[order] != null_page_index)
 		{
-			page_meta[free_list_head[order]].prev_page = page_index;
+			page_meta[z.free_list_head[order]].prev_page = page_index;
 		}
 
-		free_list_head[order] = page_index;
+		z.free_list_head[order] = page_index;
 	}
 
-	void list_remove_meta(uint32_t order, uint32_t page_index) noexcept
+	void list_remove_meta(Zone& z, uint32_t order, uint32_t page_index) noexcept
 	{
 		auto* meta = &page_meta[page_index];
 		const uint32_t prev = meta->prev_page;
@@ -81,7 +93,7 @@ namespace
 		}
 		else
 		{
-			free_list_head[order] = next;
+			z.free_list_head[order] = next;
 		}
 
 		if (next != null_page_index)
@@ -93,15 +105,15 @@ namespace
 		meta->next_page = null_page_index;
 	}
 
-	uint32_t list_pop_meta(uint32_t order) noexcept
+	uint32_t list_pop_meta(Zone& z, uint32_t order) noexcept
 	{
-		const uint32_t head = free_list_head[order];
+		const uint32_t head = z.free_list_head[order];
 		if (head == null_page_index)
 		{
 			return null_page_index;
 		}
 
-		list_remove_meta(order, head);
+		list_remove_meta(z, order, head);
 		return head;
 	}
 
@@ -165,22 +177,25 @@ namespace
 		page_meta[page_index].order = 0xFF;
 	}
 
-	void add_free_block(uint32_t page_index, uint32_t order) noexcept
+	void add_free_block(Zone& z, uint32_t page_index, uint32_t order) noexcept
 	{
 		set_order_meta(page_index, static_cast<uint8_t>(order));
-		list_push_meta(order, page_index);
+		list_push_meta(z, order, page_index);
+		z.free_pages.fetch_add(1ull << order, std::memory_order_relaxed);
 	}
 
-	uint32_t alloc_block(uint32_t order) noexcept
+	uint32_t alloc_block(Zone& z, uint32_t order) noexcept
 	{
 		for (uint32_t o = order; o <= max_order; ++o)
 		{
-			kernel::lib::IrqMcsLockGuard guard(buddy_lock[o]);
-			const uint32_t block = list_pop_meta(o);
+			kernel::lib::IrqMcsLockGuard guard(z.buddy_lock[o]);
+			const uint32_t block = list_pop_meta(z, o);
 			if (block == null_page_index)
 			{
 				continue;
 			}
+
+			z.free_pages.fetch_sub(1ull << o, std::memory_order_relaxed);
 
 			clear_order_meta(block);
 
@@ -191,8 +206,8 @@ namespace
 				--current_order;
 				const uint32_t split = current + (1u << current_order);
 				{
-					kernel::lib::IrqMcsLockGuard split_guard(buddy_lock[current_order]);
-					add_free_block(split, current_order);
+					kernel::lib::IrqMcsLockGuard split_guard(z.buddy_lock[current_order]);
+					add_free_block(z, split, current_order);
 				}
 			}
 
@@ -202,7 +217,7 @@ namespace
 		return null_page_index;
 	}
 
-	bool alloc_block_at(uint32_t target_page) noexcept
+	bool alloc_block_at(Zone& z, uint32_t target_page) noexcept
 	{
 		uint32_t found_order = 0;
 		bool found = false;
@@ -218,7 +233,7 @@ namespace
 			}
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[order]);
+				kernel::lib::IrqMcsLockGuard guard(z.buddy_lock[order]);
 				if (get_order_meta(start) == order)
 				{
 					found = true;
@@ -234,12 +249,13 @@ namespace
 		}
 
 		{
-			kernel::lib::IrqMcsLockGuard guard(buddy_lock[found_order]);
+			kernel::lib::IrqMcsLockGuard guard(z.buddy_lock[found_order]);
 			if (get_order_meta(block_start) != found_order)
 			{
 				return false;
 			}
-			list_remove_meta(found_order, block_start);
+			list_remove_meta(z, found_order, block_start);
+			z.free_pages.fetch_sub(1ull << found_order, std::memory_order_relaxed);
 			clear_order_meta(block_start);
 		}
 
@@ -255,8 +271,8 @@ namespace
 			const uint32_t keep_half = target_in_right ? right : current;
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order]);
-				add_free_block(free_half, current_order);
+				kernel::lib::IrqMcsLockGuard guard(z.buddy_lock[current_order]);
+				add_free_block(z, free_half, current_order);
 			}
 
 			current = keep_half;
@@ -265,7 +281,7 @@ namespace
 		return current == target_page;
 	}
 
-	void free_block(uint32_t page_index, uint32_t order) noexcept
+	void free_block(Zone& z, uint32_t page_index, uint32_t order) noexcept
 	{
 		uint32_t current = page_index;
 		uint32_t current_order = order;
@@ -279,12 +295,13 @@ namespace
 			}
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order]);
+				kernel::lib::IrqMcsLockGuard guard(z.buddy_lock[current_order]);
 				if (get_order_meta(buddy) != current_order)
 				{
 					break;
 				}
-				list_remove_meta(current_order, buddy);
+				list_remove_meta(z, current_order, buddy);
+				z.free_pages.fetch_sub(1ull << current_order, std::memory_order_relaxed);
 				clear_order_meta(buddy);
 			}
 
@@ -293,12 +310,12 @@ namespace
 		}
 
 		{
-			kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order]);
-			add_free_block(current, current_order);
+			kernel::lib::IrqMcsLockGuard guard(z.buddy_lock[current_order]);
+			add_free_block(z, current, current_order);
 		}
 	}
 
-	void add_free_range(uint32_t start_page, uint32_t len_pages) noexcept
+	void add_free_range(Zone& z, uint32_t start_page, uint32_t len_pages) noexcept
 	{
 		uint32_t page = start_page;
 		uint32_t remaining = len_pages;
@@ -321,8 +338,8 @@ namespace
 			}
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[order]);
-				add_free_block(page, order);
+				kernel::lib::IrqMcsLockGuard guard(z.buddy_lock[order]);
+				add_free_block(z, page, order);
 			}
 
 			const uint32_t step = 1u << order;
@@ -331,19 +348,39 @@ namespace
 		}
 	}
 
-	void build_buddy_from_metadata() noexcept
+	bool zone_contains(const Zone& z, uint32_t page) noexcept
 	{
-		list_init();
-		max_order = compute_max_order(page_count);
-		if (max_order >= 63)
+		return page >= z.start_page && page < z.end_page;
+	}
+
+	Zone& pick_zone_for_alloc(bool allow_dma) noexcept
+	{
+		const uint32_t cpu = current_cpu_index();
+		const uint32_t shard = normal_zone_shards != 0 ? (cpu % normal_zone_shards) : 0;
+		const uint32_t normal_index = 1 + shard;
+
+		if (normal_index < zone_count && zones[normal_index].start_page < zones[normal_index].end_page)
 		{
-			max_order = 63;
+			return zones[normal_index];
 		}
+
+		if (allow_dma)
+		{
+			return zones[0];
+		}
+
+		return zones[0];
+	}
+
+	void build_zone_buddy_from_metadata(Zone& z) noexcept
+	{
+		zone_list_init(z);
+		z.free_pages.store(0, std::memory_order_relaxed);
 
 		uint32_t run_start = 0;
 		uint32_t run_len = 0;
 
-		for (uint32_t i = 0; i < page_count; ++i)
+		for (uint32_t i = z.start_page; i < z.end_page; ++i)
 		{
 			const bool is_free = !is_reserved(i) && !is_allocated(i);
 			if (is_free)
@@ -358,15 +395,44 @@ namespace
 
 			if (run_len != 0)
 			{
-				add_free_range(run_start, run_len);
+				add_free_range(z, run_start, run_len);
 				run_len = 0;
 			}
 		}
 
 		if (run_len != 0)
 		{
-			add_free_range(run_start, run_len);
+			add_free_range(z, run_start, run_len);
 		}
+	}
+
+	Zone& pick_zone_for_page(uint32_t page) noexcept
+	{
+		for (uint32_t i = 0; i < zone_count; ++i)
+		{
+			if (zone_contains(zones[i], page))
+			{
+				return zones[i];
+			}
+		}
+
+		return zones[0];
+	}
+
+	uint64_t total_free_pages() noexcept
+	{
+		uint64_t total = 0;
+		for (uint32_t i = 0; i < zone_count; ++i)
+		{
+			total += zones[i].free_pages.load(std::memory_order_relaxed);
+		}
+
+		for (uint32_t cpu = 0; cpu < max_apic_id; ++cpu)
+		{
+			total += static_cast<uint64_t>(pcp[cpu].count);
+		}
+
+		return total;
 	}
 
 	bool pcp_pop(uint64_t& out_phys) noexcept
@@ -417,7 +483,6 @@ namespace
 			clear_allocated(i);
 			clear_order_meta(i);
 		}
-		free_pages += len_pages;
 	}
 
 	void mark_reserved_range(uint64_t start, uint64_t end) noexcept
@@ -436,10 +501,6 @@ namespace
 			if (!is_reserved(index) && !is_allocated(index))
 			{
 				set_reserved(index);
-				if (free_pages > 0)
-				{
-					--free_pages;
-				}
 			}
 		}
 	}
@@ -622,6 +683,11 @@ namespace kernel::mm::pmm
 
 		const uint64_t max_addr = find_max_address(multiboot);
 		page_count = kernel::lib::align_up(max_addr, page_size) / page_size;
+		max_order = compute_max_order(page_count);
+		if (max_order >= 63)
+		{
+			max_order = 63;
+		}
 
 		const uint64_t metadata_bytes = page_count * sizeof(PageMetadata);
 		const uint64_t metadata_phys = place_metadata(multiboot, metadata_bytes);
@@ -678,7 +744,6 @@ namespace kernel::mm::pmm
 			set_reserved(static_cast<uint32_t>(i));
 		}
 
-		free_pages = 0;
 		alloc_limit_bytes = early_mapped_limit;
 		unreserve_available(multiboot);
 
@@ -686,12 +751,43 @@ namespace kernel::mm::pmm
 		mark_reserved_range(kernel_phys_start(), kernel_phys_end());
 		mark_reserved_range(metadata_phys, metadata_phys + metadata_bytes);
 
-		build_buddy_from_metadata();
+		const uint64_t limit_pages64 = alloc_limit_bytes == ~0ull ? page_count : (alloc_limit_bytes / page_size);
+		const uint32_t limit_pages = static_cast<uint32_t>(limit_pages64 > page_count ? page_count : limit_pages64);
+		const uint32_t dma_pages = static_cast<uint32_t>(dma_limit_bytes / page_size);
+		const uint32_t dma_end = dma_pages < limit_pages ? dma_pages : limit_pages;
+
+		zones[0].start_page = 0;
+		zones[0].end_page = dma_end;
+
+		const uint32_t normal_start = dma_end;
+		const uint32_t normal_end = limit_pages;
+		const uint32_t normal_len = normal_end > normal_start ? (normal_end - normal_start) : 0;
+		const uint32_t shard_len = normal_zone_shards != 0 ? ((normal_len + normal_zone_shards - 1) / normal_zone_shards) : 0;
+
+		for (uint32_t i = 0; i < normal_zone_shards; ++i)
+		{
+			const uint32_t z = 1 + i;
+			zones[z].start_page = normal_start + i * shard_len;
+			zones[z].end_page = zones[z].start_page + shard_len;
+			if (zones[z].start_page > normal_end)
+			{
+				zones[z].start_page = normal_end;
+			}
+			if (zones[z].end_page > normal_end)
+			{
+				zones[z].end_page = normal_end;
+			}
+		}
+
+		for (uint32_t i = 0; i < zone_count; ++i)
+		{
+			build_zone_buddy_from_metadata(zones[i]);
+		}
 
 		kernel::log::write("pmm pages total=");
 		kernel::log::write_u64_dec(page_count);
 		kernel::log::write(" free=");
-		kernel::log::write_u64_dec(free_pages);
+		kernel::log::write_u64_dec(total_free_pages());
 		kernel::log::write(" limit=");
 		kernel::log::write_u64_hex(alloc_limit_bytes);
 		kernel::log::write(" metadata=");
@@ -707,7 +803,7 @@ namespace kernel::mm::pmm
 
 		return Stats{
 			.total_pages = page_count,
-			.free_pages = free_pages,
+			.free_pages = total_free_pages(),
 			.alloc_limit_bytes = alloc_limit_bytes,
 		};
 	}
@@ -734,27 +830,25 @@ namespace kernel::mm::pmm
 			{
 				kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 				set_allocated(index);
-				if (free_pages > 0)
-				{
-					--free_pages;
-				}
 				return cached;
 			}
 		}
 
 		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 
-		const uint32_t block = alloc_block(0);
+		Zone& z = pick_zone_for_alloc(false);
+		uint32_t block = alloc_block(z, 0);
 		if (block == null_page_index)
 		{
-			return 0;
+			Zone& dma = zones[0];
+			block = alloc_block(dma, 0);
+			if (block == null_page_index)
+			{
+				return 0;
+			}
 		}
 
 		set_allocated(block);
-		if (free_pages > 0)
-		{
-			--free_pages;
-		}
 		return static_cast<uint64_t>(block) * page_size;
 	}
 
@@ -783,16 +877,18 @@ namespace kernel::mm::pmm
 			return 0;
 		}
 
-		if (!alloc_block_at(index))
+		Zone& z = pick_zone_for_page(index);
+		if (!zone_contains(z, index))
+		{
+			return 0;
+		}
+
+		if (!alloc_block_at(z, index))
 		{
 			return 0;
 		}
 
 		set_allocated(index);
-		if (free_pages > 0)
-		{
-			--free_pages;
-		}
 
 		return phys_addr;
 	}
@@ -818,7 +914,6 @@ namespace kernel::mm::pmm
 			}
 
 			clear_allocated(index);
-			++free_pages;
 		}
 
 		if (pcp_push(phys_addr))
@@ -827,6 +922,7 @@ namespace kernel::mm::pmm
 		}
 
 		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-		free_block(index, 0);
+		Zone& z = pick_zone_for_page(index);
+		free_block(z, index, 0);
 	}
 }
