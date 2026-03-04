@@ -61,6 +61,11 @@ namespace kernel::arch::x86_64::tlb
 
 	void on_nmi() noexcept
 	{
+		kernel::arch::x86_64::apic::lapic::eoi();
+	}
+
+	void on_ipi() noexcept
+	{
 		handle_shootdown();
 		kernel::arch::x86_64::apic::lapic::eoi();
 	}
@@ -88,7 +93,7 @@ namespace kernel::arch::x86_64::tlb
 		shoot_acks.store(0, std::memory_order_relaxed);
 		shoot_seq.fetch_add(1, std::memory_order_release);
 
-		kernel::arch::x86_64::apic::lapic::broadcast_nmi(false);
+		kernel::arch::x86_64::apic::lapic::broadcast_ipi(kernel::arch::x86_64::tlb::shootdown_vector, false);
 		kernel::arch::x86_64::invlpg(reinterpret_cast<void*>(virt));
 
 		while (shoot_acks.load(std::memory_order_acquire) < expected)

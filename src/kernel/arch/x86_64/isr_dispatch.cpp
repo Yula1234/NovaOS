@@ -69,6 +69,11 @@ namespace
 		kernel::arch::x86_64::tlb::on_nmi();
 	}
 
+	void dispatch_tlb_shootdown(kernel::arch::x86_64::InterruptContext*) noexcept
+	{
+		kernel::arch::x86_64::tlb::on_ipi();
+	}
+
 	void dispatch_gp(kernel::arch::x86_64::InterruptContext* ctx) noexcept
 	{
 		kernel::log::write_line("#GP");
@@ -122,6 +127,7 @@ namespace
 
 		isr_handlers[0x30] = dispatch_timer;
 		isr_handlers[0x31] = dispatch_ipi;
+		isr_handlers[kernel::arch::x86_64::tlb::shootdown_vector] = dispatch_tlb_shootdown;
 		isr_handlers[2] = dispatch_nmi;
 		isr_handlers[13] = dispatch_gp;
 		isr_handlers[14] = dispatch_pf;
