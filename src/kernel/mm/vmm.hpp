@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "kernel/boot/multiboot2.hpp"
+#include "lib/lock.hpp"
 
 namespace kernel::mm::vmm
 {
@@ -32,6 +33,8 @@ namespace kernel::mm::vmm
 		AddressSpace() noexcept;
 		explicit AddressSpace(uint64_t pml4_phys) noexcept;
 
+		void reset(uint64_t pml4_phys) noexcept;
+
 		uint64_t pml4_phys() const noexcept;
 
 		bool map_page(uint64_t virt, uint64_t phys, PageFlags flags) noexcept;
@@ -43,6 +46,7 @@ namespace kernel::mm::vmm
 
 	private:
 		uint64_t pml4_phys_;
+		mutable kernel::lib::SpinLock lock_;
 	};
 
 	void init() noexcept;

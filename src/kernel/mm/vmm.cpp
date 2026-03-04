@@ -4,10 +4,10 @@
 #include <stdint.h>
 
 #include "kernel/arch/x86_64/cpu.hpp"
+#include "kernel/arch/x86_64/tlb.hpp"
 #include "kernel/log/log.hpp"
 #include "kernel/mm/physmap.hpp"
 #include "kernel/mm/pmm.hpp"
-#include "lib/lock.hpp"
 
 namespace
 {
@@ -215,7 +215,6 @@ namespace
 	}
 
 	kernel::mm::vmm::AddressSpace kernel_as;
-	kernel::lib::SpinLock vmm_lock;
 }
 
 namespace kernel::mm::vmm
@@ -230,6 +229,12 @@ namespace kernel::mm::vmm
 	{
 	}
 
+	void AddressSpace::reset(uint64_t pml4_phys) noexcept
+	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
+		pml4_phys_ = pml4_phys & addr_mask;
+	}
+
 	uint64_t AddressSpace::pml4_phys() const noexcept
 	{
 		return pml4_phys_;
@@ -237,7 +242,7 @@ namespace kernel::mm::vmm
 
 	bool AddressSpace::map_page(uint64_t virt, uint64_t phys, PageFlags flags) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vmm_lock);
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
 
 		if ((virt % page_size) != 0 || (phys % page_size) != 0)
 		{
@@ -272,13 +277,13 @@ namespace kernel::mm::vmm
 		auto* pt = table_virt(pt_phys);
 		pt[pt_i] = make_entry(phys, flags | PageFlags::Present);
 
-		kernel::arch::x86_64::invlpg(reinterpret_cast<void*>(virt));
+		kernel::arch::x86_64::tlb::shootdown_page(pml4_phys_, virt);
 		return true;
 	}
 
 	bool AddressSpace::unmap_page(uint64_t virt) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vmm_lock);
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
 
 		if ((virt % page_size) != 0)
 		{
@@ -316,7 +321,7 @@ namespace kernel::mm::vmm
 		if (entry_is_large(pde))
 		{
 			pd[pd_i] = 0;
-			kernel::arch::x86_64::invlpg(reinterpret_cast<void*>(virt));
+			kernel::arch::x86_64::tlb::shootdown_page(pml4_phys_, virt);
 
 			if (table_empty(pd_phys))
 			{
@@ -340,7 +345,7 @@ namespace kernel::mm::vmm
 		}
 
 		pt[pt_i] = 0;
-		kernel::arch::x86_64::invlpg(reinterpret_cast<void*>(virt));
+		kernel::arch::x86_64::tlb::shootdown_page(pml4_phys_, virt);
 
 		if (table_empty(pt_phys))
 		{
@@ -362,7 +367,7 @@ namespace kernel::mm::vmm
 
 	uint64_t AddressSpace::translate(uint64_t virt) const noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vmm_lock);
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(lock_);
 
 		const uint64_t offset = virt & (page_size - 1);
 
@@ -427,6 +432,8 @@ namespace kernel::mm::vmm
 
 	void init() noexcept
 	{
+		kernel::arch::x86_64::tlb::init();
+
 		const uint64_t current_pml4 = kernel::arch::x86_64::read_cr3() & addr_mask;
 		const uint64_t new_pml4 = alloc_table_page();
 		if (new_pml4 == 0)
@@ -441,7 +448,7 @@ namespace kernel::mm::vmm
 		next[0] = current[0];
 		next[511] = current[511];
 
-		kernel_as = AddressSpace(new_pml4 & addr_mask);
+		kernel_as.reset(new_pml4 & addr_mask);
 		kernel_as.activate();
 
 		kernel::log::write("vmm cr3 switched pml4=");
