@@ -6,6 +6,7 @@
 #include "kernel/arch/x86_64/interrupt_frame.hpp"
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/irq.hpp"
+#include "kernel/arch/x86_64/gdt.hpp"
 #include "kernel/log/log.hpp"
 
 namespace
@@ -26,14 +27,14 @@ namespace
 	IdtEntry idt_table[256];
 	kernel::arch::x86_64::Idtr active_idtr{};
 
-	IdtEntry make_entry(void (*handler)(), uint8_t type_attr) noexcept
+	IdtEntry make_entry(void (*handler)(), uint8_t type_attr, uint8_t ist) noexcept
 	{
 		const uint64_t addr = reinterpret_cast<uint64_t>(handler);
 
 		IdtEntry e{};
 		e.offset_0_15 = static_cast<uint16_t>(addr);
-		e.selector = 0x08;
-		e.ist = 0;
+		e.selector = kernel::arch::x86_64::gdt::selectors::kernel_code;
+		e.ist = static_cast<uint8_t>(ist & 0x7u);
 		e.type_attr = type_attr;
 		e.offset_16_31 = static_cast<uint16_t>(addr >> 16);
 		e.offset_32_63 = static_cast<uint32_t>(addr >> 32);
@@ -113,7 +114,12 @@ namespace
 
 	void set_isr(uint8_t vector, void (*handler)()) noexcept
 	{
-		idt_table[vector] = make_entry(handler, interrupt_gate);
+		idt_table[vector] = make_entry(handler, interrupt_gate, 0);
+	}
+
+	void set_isr_ist(uint8_t vector, void (*handler)(), uint8_t ist) noexcept
+	{
+		idt_table[vector] = make_entry(handler, interrupt_gate, ist);
 	}
 }
 
@@ -123,11 +129,13 @@ namespace kernel::arch::x86_64::idt
 	{
 		for (size_t i = 0; i < 256; ++i)
 		{
-			idt_table[i] = make_entry(reinterpret_cast<void (*)()>(isr_default), interrupt_gate);
+			idt_table[i] = make_entry(reinterpret_cast<void (*)()>(isr_default), interrupt_gate, 0);
 		}
 
 		set_isr(13, reinterpret_cast<void (*)()>(isr_gpf));
-		set_isr(14, reinterpret_cast<void (*)()>(isr_page_fault));
+		set_isr_ist(14, reinterpret_cast<void (*)()>(isr_page_fault), 3);
+		set_isr_ist(8, reinterpret_cast<void (*)()>(isr_default), 1);
+		set_isr_ist(2, reinterpret_cast<void (*)()>(isr_default), 2);
 
 		set_isr(0x20, reinterpret_cast<void (*)()>(isr_irq0));
 		set_isr(0x21, reinterpret_cast<void (*)()>(isr_irq1));

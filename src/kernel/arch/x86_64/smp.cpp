@@ -6,6 +6,7 @@
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/apic/timer.hpp"
 #include "kernel/arch/x86_64/cpu.hpp"
+#include "kernel/arch/x86_64/gdt.hpp"
 #include "kernel/arch/x86_64/idt.hpp"
 #include "kernel/log/log.hpp"
 #include "kernel/mm/pmm.hpp"
@@ -55,18 +56,10 @@ namespace
 
 	std::atomic<uint32_t> ap_ready[max_cpus]{};
 	std::atomic<uint32_t> ap_go[max_cpus]{};
-	kernel::arch::x86_64::Idtr ap_kernel_gdtr[max_cpus]{};
 
 	uint64_t read_cr3_phys() noexcept
 	{
 		return kernel::arch::x86_64::read_cr3() & 0x000FFFFFFFFFF000ull;
-	}
-
-	kernel::arch::x86_64::Idtr read_gdtr() noexcept
-	{
-		kernel::arch::x86_64::Idtr gdtr{};
-		asm volatile("sgdt %0" : "=m"(gdtr));
-		return gdtr;
 	}
 
 	bool setup_trampoline_image() noexcept
@@ -210,35 +203,7 @@ namespace
 			mailbox->stage = 106;
 		}
 
-		if (mailbox)
-		{
-			const uint8_t apic_id = kernel::arch::x86_64::apic::lapic::id() & 0xFFu;
-			const auto gdtr = ap_kernel_gdtr[apic_id];
-			asm volatile("lgdt %0" : : "m"(gdtr));
-
-			asm volatile(
-				"pushq $0x08\n"
-				"lea 1f(%%rip), %%rax\n"
-				"pushq %%rax\n"
-				"lretq\n"
-				"1:\n"
-				:
-				:
-				: "rax", "memory"
-			);
-
-			asm volatile(
-				"mov $0x10, %%ax\n"
-				"mov %%ax, %%ds\n"
-				"mov %%ax, %%es\n"
-				"mov %%ax, %%ss\n"
-				"mov %%ax, %%fs\n"
-				"mov %%ax, %%gs\n"
-				:
-				:
-				: "rax", "memory"
-			);
-		}
+		kernel::arch::x86_64::gdt::init_cpu(apic_id, mailbox ? mailbox->rsp : 0);
 
 		kernel::arch::x86_64::idt::reload();
 
@@ -271,7 +236,6 @@ namespace
 
 		ap_ready[apic_id].store(0, std::memory_order_relaxed);
 		ap_go[apic_id].store(0, std::memory_order_relaxed);
-		ap_kernel_gdtr[apic_id] = read_gdtr();
 
 		auto* mailbox = reinterpret_cast<TrampolineMailbox*>(
 			reinterpret_cast<uint8_t*>(kernel::mm::physmap::to_virt(trampoline_phys)) + mailbox_off
