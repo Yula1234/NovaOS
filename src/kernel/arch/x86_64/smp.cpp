@@ -13,6 +13,8 @@
 #include "kernel/mm/vmm.hpp"
 #include "kernel/time/time.hpp"
 
+#include "string.h"
+
 extern "C" uint8_t ap_trampoline_start;
 extern "C" uint8_t ap_trampoline_end;
 extern "C" uint8_t ap_trampoline_mailbox;
@@ -65,17 +67,6 @@ namespace
 		kernel::arch::x86_64::Idtr gdtr{};
 		asm volatile("sgdt %0" : "=m"(gdtr));
 		return gdtr;
-	}
-
-	void copy_bytes(void* dst, const void* src, size_t len) noexcept
-	{
-		auto* d = static_cast<uint8_t*>(dst);
-		const auto* s = static_cast<const uint8_t*>(src);
-
-		for (size_t i = 0; i < len; ++i)
-		{
-			d[i] = s[i];
-		}
 	}
 
 	bool setup_trampoline_image() noexcept
@@ -137,7 +128,7 @@ namespace
 		}
 
 		void* dst = kernel::mm::physmap::to_virt(trampoline_phys);
-		copy_bytes(dst, start, static_cast<size_t>(trampoline_size));
+		memcpy(dst, start, static_cast<size_t>(trampoline_size));
 
 		auto* image = static_cast<uint8_t*>(dst);
 		const uint32_t gdt_base = static_cast<uint32_t>(trampoline_phys + gdt_off);
