@@ -126,6 +126,23 @@ namespace kernel::arch::x86_64
 		return (edx & (1u << 20)) != 0;
 	}
 
+	inline bool pdpe1gb_supported() noexcept
+	{
+		uint32_t eax;
+		uint32_t ebx;
+		uint32_t ecx;
+		uint32_t edx;
+
+		cpuid(0x80000000u, 0, eax, ebx, ecx, edx);
+		if (eax < 0x80000001u)
+		{
+			return false;
+		}
+
+		cpuid(0x80000001u, 0, eax, ebx, ecx, edx);
+		return (edx & (1u << 26)) != 0;
+	}
+
 	inline void enable_nx() noexcept
 	{
 		if (!nx_supported())

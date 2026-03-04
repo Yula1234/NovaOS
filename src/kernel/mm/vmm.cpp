@@ -13,6 +13,7 @@ namespace
 {
 	constexpr uint64_t page_size = 4096;
 	constexpr uint64_t large_page_size = 0x200000;
+	constexpr uint64_t huge_page_size = 0x40000000;
 	constexpr uint64_t early_mapped_limit = 0x100000000ull;
 	constexpr uint64_t addr_mask = 0x000FFFFFFFFFF000ull;
 
@@ -31,6 +32,20 @@ namespace
 	uint64_t make_large_pde(uint64_t phys, kernel::mm::vmm::PageFlags flags) noexcept
 	{
 		uint64_t value = phys & 0x000FFFFFFFE00000ull;
+		value |= static_cast<uint64_t>(flags) & ~bit_nx;
+		value |= bit_ps;
+
+		if ((static_cast<uint64_t>(flags) & static_cast<uint64_t>(kernel::mm::vmm::PageFlags::NoExecute)) != 0)
+		{
+			value |= bit_nx;
+		}
+
+		return value;
+	}
+
+	uint64_t make_large_pdpe(uint64_t phys, kernel::mm::vmm::PageFlags flags) noexcept
+	{
+		uint64_t value = phys & 0x000FFFFFC0000000ull;
 		value |= static_cast<uint64_t>(flags) & ~bit_nx;
 		value |= bit_ps;
 
@@ -124,6 +139,47 @@ namespace
 			}
 		}
 
+		return true;
+	}
+
+	uint64_t ensure_table(uint64_t parent_phys, size_t index, uint64_t flags) noexcept;
+
+	static bool map_large_1g(
+		kernel::mm::vmm::AddressSpace& as,
+		uint64_t virt,
+		uint64_t phys,
+		kernel::mm::vmm::PageFlags flags
+	) noexcept
+	{
+		if (!kernel::arch::x86_64::pdpe1gb_supported())
+		{
+			return false;
+		}
+
+		if ((virt % huge_page_size) != 0 || (phys % huge_page_size) != 0)
+		{
+			return false;
+		}
+
+		const uint64_t pml4_i = pml4_index(virt);
+		const uint64_t pdpt_i = pdpt_index(virt);
+
+		const uint64_t table_flags = bit_present | bit_writable;
+		const uint64_t pdpt_phys = ensure_table(as.pml4_phys(), pml4_i, table_flags);
+		if (!pdpt_phys)
+		{
+			return false;
+		}
+
+		auto* pdpt = table_virt(pdpt_phys);
+		const uint64_t old = pdpt[pdpt_i];
+		if (entry_present(old))
+		{
+			return false;
+		}
+
+		pdpt[pdpt_i] = make_large_pdpe(phys, flags | kernel::mm::vmm::PageFlags::Present);
+		kernel::arch::x86_64::invlpg(reinterpret_cast<void*>(virt));
 		return true;
 	}
 
@@ -474,6 +530,19 @@ namespace kernel::mm::vmm
 
 		while (remaining != 0)
 		{
+			if ((v % huge_page_size) == 0 && (p % huge_page_size) == 0 && remaining >= huge_page_size)
+			{
+				if (!map_large_1g(kernel_as, v, p, flags))
+				{
+					return false;
+				}
+
+				v += huge_page_size;
+				p += huge_page_size;
+				remaining -= huge_page_size;
+				continue;
+			}
+
 			if ((v % large_page_size) == 0 && (p % large_page_size) == 0 && remaining >= large_page_size)
 			{
 				if (!map_large_2m(kernel_as, v, p, flags))
