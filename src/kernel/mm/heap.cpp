@@ -121,7 +121,7 @@ namespace
 		auto& list = classes[class_i];
 		auto& c = per_cpu_cache[cpu_index()][class_i];
 
-		kernel::lib::IrqMcsLockGuard class_guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard class_guard(list.lock);
 
 		uint32_t count = c.count.load(std::memory_order_relaxed);
 		while (count < per_cpu_obj_capacity)
@@ -167,7 +167,7 @@ namespace
 			return;
 		}
 
-		kernel::lib::IrqMcsLockGuard class_guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard class_guard(list.lock);
 		for (uint32_t i = 0; i < count; ++i)
 		{
 			free_to_class_locked(list, to_free[i]);
@@ -176,7 +176,7 @@ namespace
 
 	uint64_t alloc_heap_pages(uint32_t pages) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock);
 
 		const uint64_t total = static_cast<uint64_t>(pages) * page_size;
 		const uint64_t base = kernel::lib::align_up(next_heap_virt, page_size);
@@ -331,7 +331,7 @@ namespace
 	void* alloc_from_class(size_t class_i) noexcept
 	{
 		auto& list = classes[class_i];
-		kernel::lib::IrqMcsLockGuard guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(list.lock);
 
 		uint64_t page = list.head_partial;
 		SlabListKind from_kind = SlabListKind::Partial;
@@ -392,7 +392,7 @@ namespace
 		const uint64_t page = kernel::lib::align_down(addr, page_size);
 		auto& list = classes[class_i];
 
-		kernel::lib::IrqMcsLockGuard guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(list.lock);
 		auto* h = slab_from_page(page);
 		if (h->magic != slab_magic)
 		{
@@ -656,7 +656,7 @@ namespace kernel::mm::heap
 {
 	void init() noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock);
 		next_heap_virt = heap_base;
 
 		for (size_t i = 0; i < class_count; ++i)

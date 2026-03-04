@@ -206,9 +206,8 @@ namespace kernel::lib
 	class McsLockGuard
 	{
 	public:
-		McsLockGuard(McsLock& lock, McsNode& node) noexcept
+		explicit McsLockGuard(McsLock& lock) noexcept
 			: lock_(lock)
-			, node_(node)
 		{
 			lock_.lock(&node_);
 		}
@@ -223,15 +222,14 @@ namespace kernel::lib
 
 	private:
 		McsLock& lock_;
-		McsNode& node_;
+		McsNode node_;
 	};
 
 	class IrqMcsLockGuard
 	{
 	public:
-		IrqMcsLockGuard(McsLock& lock, McsNode& node) noexcept
+		explicit IrqMcsLockGuard(McsLock& lock) noexcept
 			: lock_(lock)
-			, node_(node)
 			, rflags_(irq_save_disable())
 		{
 			lock_.lock(&node_);
@@ -248,7 +246,7 @@ namespace kernel::lib
 
 	private:
 		McsLock& lock_;
-		McsNode& node_;
+		McsNode node_;
 		uint64_t rflags_;
 	};
 }

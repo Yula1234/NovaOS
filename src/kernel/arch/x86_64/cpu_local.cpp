@@ -7,7 +7,7 @@ namespace
 {
 	constexpr uint32_t msr_gs_base = 0xC0000101u;
 	constexpr uint32_t msr_kernel_gs_base = 0xC0000102u;
-	constexpr uint64_t per_cpu_struct_size = 320;
+	constexpr uint64_t per_cpu_struct_size = 64;
 
 	alignas(64) static uint8_t bsp_cpu_local_storage[per_cpu_struct_size];
 	constexpr uint32_t max_cpus = 256;
@@ -104,17 +104,5 @@ namespace kernel::arch::x86_64::cpu_local
 	void set_current_thread(uint64_t thread_ptr) noexcept
 	{
 		asm volatile("mov %0, %%gs:24" : : "r"(thread_ptr) : "memory");
-	}
-
-	kernel::lib::McsNode* mcs_node() noexcept
-	{
-		CpuLocalData* data = get();
-		return &data->mcs_node;
-	}
-
-	kernel::lib::McsNode* mcs_node2() noexcept
-	{
-		CpuLocalData* data = get();
-		return &data->mcs_node2;
 	}
 }

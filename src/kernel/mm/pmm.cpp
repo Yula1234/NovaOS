@@ -176,7 +176,7 @@ namespace
 	{
 		for (uint32_t o = order; o <= max_order; ++o)
 		{
-			kernel::lib::IrqMcsLockGuard guard(buddy_lock[o], *kernel::arch::x86_64::cpu_local::mcs_node());
+			kernel::lib::IrqMcsLockGuard guard(buddy_lock[o]);
 			const uint32_t block = list_pop_meta(o);
 			if (block == null_page_index)
 			{
@@ -192,7 +192,7 @@ namespace
 				--current_order;
 				const uint32_t split = current + (1u << current_order);
 				{
-					kernel::lib::IrqMcsLockGuard split_guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node2());
+					kernel::lib::IrqMcsLockGuard split_guard(buddy_lock[current_order]);
 					add_free_block(split, current_order);
 				}
 			}
@@ -219,7 +219,7 @@ namespace
 			}
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[order], *kernel::arch::x86_64::cpu_local::mcs_node());
+				kernel::lib::IrqMcsLockGuard guard(buddy_lock[order]);
 				if (get_order_meta(start) == order)
 				{
 					found = true;
@@ -235,7 +235,7 @@ namespace
 		}
 
 		{
-			kernel::lib::IrqMcsLockGuard guard(buddy_lock[found_order], *kernel::arch::x86_64::cpu_local::mcs_node());
+			kernel::lib::IrqMcsLockGuard guard(buddy_lock[found_order]);
 			if (get_order_meta(block_start) != found_order)
 			{
 				return false;
@@ -256,7 +256,7 @@ namespace
 			const uint32_t keep_half = target_in_right ? right : current;
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node2());
+				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order]);
 				add_free_block(free_half, current_order);
 			}
 
@@ -280,7 +280,7 @@ namespace
 			}
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node());
+				kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order]);
 				if (get_order_meta(buddy) != current_order)
 				{
 					break;
@@ -294,7 +294,7 @@ namespace
 		}
 
 		{
-			kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order], *kernel::arch::x86_64::cpu_local::mcs_node());
+			kernel::lib::IrqMcsLockGuard guard(buddy_lock[current_order]);
 			add_free_block(current, current_order);
 		}
 	}
@@ -322,7 +322,7 @@ namespace
 			}
 
 			{
-				kernel::lib::IrqMcsLockGuard guard(buddy_lock[order], *kernel::arch::x86_64::cpu_local::mcs_node());
+				kernel::lib::IrqMcsLockGuard guard(buddy_lock[order]);
 				add_free_block(page, order);
 			}
 
@@ -625,7 +625,7 @@ namespace kernel::mm::pmm
 
 	void init(const kernel::boot::multiboot2::Reader& multiboot) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 
 		const uint64_t max_addr = find_max_address(multiboot);
 		page_count = kernel::lib::align_up(max_addr, page_size) / page_size;
@@ -710,7 +710,7 @@ namespace kernel::mm::pmm
 
 	Stats stats() noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 
 		return Stats{
 			.total_pages = page_count,
@@ -721,13 +721,13 @@ namespace kernel::mm::pmm
 
 	uint64_t alloc_limit() noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 		return alloc_limit_bytes;
 	}
 
 	void set_alloc_limit(uint64_t limit_bytes) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 		alloc_limit_bytes = limit_bytes;
 	}
 
@@ -739,7 +739,7 @@ namespace kernel::mm::pmm
 			const uint32_t index = static_cast<uint32_t>(cached / page_size);
 			if (index < page_count && !is_allocated(index) && !is_reserved(index) && cached < alloc_limit_bytes)
 			{
-				kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+				kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 				set_allocated(index);
 				if (free_pages > 0)
 				{
@@ -749,7 +749,7 @@ namespace kernel::mm::pmm
 			}
 		}
 
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 
 		const uint32_t block = alloc_block(0);
 		if (block == null_page_index)
@@ -767,7 +767,7 @@ namespace kernel::mm::pmm
 
 	uint64_t alloc_page_at(uint64_t phys_addr) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 
 		if ((phys_addr % page_size) != 0)
 		{
@@ -818,7 +818,7 @@ namespace kernel::mm::pmm
 		}
 
 		{
-			kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+			kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 			if (!is_allocated(index))
 			{
 				return;
@@ -833,7 +833,7 @@ namespace kernel::mm::pmm
 			return;
 		}
 
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
+		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 		free_block(index, 0);
 	}
 }
