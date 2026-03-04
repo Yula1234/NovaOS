@@ -1,5 +1,6 @@
 #include "kernel/mm/heap.hpp"
 
+#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -63,20 +64,19 @@ namespace
 		uint64_t head_empty;
 		uint64_t head_partial;
 		uint64_t head_full;
-		kernel::lib::SpinLock lock;
+		kernel::lib::McsLock lock;
 	};
 
 	uint64_t next_heap_virt = heap_base;
 	ClassList classes[class_count] = {};
-	kernel::lib::SpinLock heap_virt_lock;
+	kernel::lib::McsLock heap_virt_lock;
 
 	constexpr uint32_t max_apic_id = 256;
 	constexpr uint32_t per_cpu_obj_capacity = 32;
 
 	struct PerCpuClassCache
 	{
-		kernel::lib::SpinLock lock;
-		uint32_t count;
+		std::atomic<uint32_t> count{0};
 		void* objects[per_cpu_obj_capacity];
 	};
 
@@ -121,10 +121,10 @@ namespace
 		auto& list = classes[class_i];
 		auto& c = per_cpu_cache[cpu_index()][class_i];
 
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> class_guard(list.lock);
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> cache_guard(c.lock);
+		kernel::lib::IrqMcsLockGuard class_guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
 
-		while (c.count < per_cpu_obj_capacity)
+		uint32_t count = c.count.load(std::memory_order_relaxed);
+		while (count < per_cpu_obj_capacity)
 		{
 			void* obj = alloc_from_class_locked(list, class_i);
 			if (!obj)
@@ -132,11 +132,12 @@ namespace
 				break;
 			}
 
-			c.objects[c.count] = obj;
-			++c.count;
+			c.objects[count] = obj;
+			c.count.store(count + 1, std::memory_order_release);
+			count = count + 1;
 		}
 
-		return c.count != 0;
+		return count != 0;
 	}
 
 	void drain_cache(size_t class_i, uint32_t drain_count) noexcept
@@ -148,13 +149,16 @@ namespace
 		uint32_t count = 0;
 
 		{
-			kernel::lib::IrqLockGuard<kernel::lib::SpinLock> cache_guard(c.lock);
-			const uint32_t available = c.count;
-			count = drain_count < available ? drain_count : available;
-			for (uint32_t i = 0; i < count; ++i)
+			uint32_t cur = c.count.load(std::memory_order_relaxed);
+			const uint32_t to_drain = drain_count < cur ? drain_count : cur;
+			while (cur > 0 && count < to_drain)
 			{
-				to_free[i] = c.objects[c.count - 1];
-				--c.count;
+				if (c.count.compare_exchange_weak(cur, cur - 1, std::memory_order_acquire, std::memory_order_relaxed))
+				{
+					to_free[count] = c.objects[cur - 1];
+					++count;
+					cur = c.count.load(std::memory_order_relaxed);
+				}
 			}
 		}
 
@@ -163,7 +167,7 @@ namespace
 			return;
 		}
 
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> class_guard(list.lock);
+		kernel::lib::IrqMcsLockGuard class_guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
 		for (uint32_t i = 0; i < count; ++i)
 		{
 			free_to_class_locked(list, to_free[i]);
@@ -172,7 +176,7 @@ namespace
 
 	uint64_t alloc_heap_pages(uint32_t pages) noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(heap_virt_lock);
+		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
 
 		const uint64_t total = static_cast<uint64_t>(pages) * page_size;
 		const uint64_t base = kernel::lib::align_up(next_heap_virt, page_size);
@@ -327,7 +331,7 @@ namespace
 	void* alloc_from_class(size_t class_i) noexcept
 	{
 		auto& list = classes[class_i];
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(list.lock);
+		kernel::lib::IrqMcsLockGuard guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
 
 		uint64_t page = list.head_partial;
 		SlabListKind from_kind = SlabListKind::Partial;
@@ -388,7 +392,7 @@ namespace
 		const uint64_t page = kernel::lib::align_down(addr, page_size);
 		auto& list = classes[class_i];
 
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(list.lock);
+		kernel::lib::IrqMcsLockGuard guard(list.lock, *kernel::arch::x86_64::cpu_local::mcs_node());
 		auto* h = slab_from_page(page);
 		if (h->magic != slab_magic)
 		{
@@ -517,29 +521,45 @@ namespace
 	bool cache_pop(size_t class_i, void*& out) noexcept
 	{
 		auto& c = per_cpu_cache[cpu_index()][class_i];
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(c.lock);
-		if (c.count == 0)
+
+		uint32_t count = c.count.load(std::memory_order_relaxed);
+		if (count == 0)
 		{
 			return false;
 		}
 
-		out = c.objects[c.count - 1];
-		--c.count;
-		return true;
+		while (count > 0)
+		{
+			if (c.count.compare_exchange_weak(count, count - 1, std::memory_order_acquire, std::memory_order_relaxed))
+			{
+				out = c.objects[count - 1];
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	bool cache_push(size_t class_i, void* ptr) noexcept
 	{
 		auto& c = per_cpu_cache[cpu_index()][class_i];
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(c.lock);
-		if (c.count >= per_cpu_obj_capacity)
+
+		uint32_t count = c.count.load(std::memory_order_relaxed);
+		if (count >= per_cpu_obj_capacity)
 		{
 			return false;
 		}
 
-		c.objects[c.count] = ptr;
-		++c.count;
-		return true;
+		while (count < per_cpu_obj_capacity)
+		{
+			if (c.count.compare_exchange_weak(count, count + 1, std::memory_order_acquire, std::memory_order_relaxed))
+			{
+				c.objects[count] = ptr;
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	void free_to_slab(void* ptr) noexcept
@@ -636,7 +656,7 @@ namespace kernel::mm::heap
 {
 	void init() noexcept
 	{
-		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(heap_virt_lock);
+		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock, *kernel::arch::x86_64::cpu_local::mcs_node());
 		next_heap_virt = heap_base;
 
 		for (size_t i = 0; i < class_count; ++i)
@@ -650,7 +670,7 @@ namespace kernel::mm::heap
 		{
 			for (size_t ci = 0; ci < class_count; ++ci)
 			{
-				per_cpu_cache[cpu][ci].count = 0;
+				per_cpu_cache[cpu][ci].count.store(0, std::memory_order_relaxed);
 			}
 		}
 

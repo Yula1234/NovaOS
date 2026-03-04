@@ -87,6 +87,75 @@ namespace kernel::lib
 		uint8_t padding_[63] = {};
 	};
 
+	struct alignas(64) McsNode
+	{
+		volatile uint8_t waiting = 1;
+		McsNode* next = nullptr;
+		uint8_t padding_[48] = {};
+	};
+
+	static_assert(sizeof(McsNode) == 64, "McsNode must be exactly one cache line");
+
+	class McsLock
+	{
+	public:
+		McsLock() noexcept = default;
+
+		McsLock(const McsLock&) = delete;
+		McsLock& operator=(const McsLock&) = delete;
+
+		void lock(McsNode* node) noexcept
+		{
+			node->next = nullptr;
+			node->waiting = 1;
+
+			McsNode* prev = __atomic_exchange_n(&tail_, node, __ATOMIC_ACQ_REL);
+
+			if (prev == nullptr)
+			{
+				return;
+			}
+
+			prev->next = node;
+			__atomic_thread_fence(__ATOMIC_RELEASE);
+
+			while (__atomic_load_n(&node->waiting, __ATOMIC_ACQUIRE) != 0)
+			{
+				asm volatile("pause");
+			}
+		}
+
+		void unlock(McsNode* node) noexcept
+		{
+			McsNode* next = __atomic_load_n(&node->next, __ATOMIC_ACQUIRE);
+
+			if (next == nullptr)
+			{
+				McsNode* expected = node;
+				if (__atomic_compare_exchange_n(&tail_, &expected, static_cast<McsNode*>(nullptr), false, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
+				{
+					return;
+				}
+
+				while ((next = __atomic_load_n(&node->next, __ATOMIC_ACQUIRE)) == nullptr)
+				{
+					asm volatile("pause");
+				}
+			}
+
+			__atomic_store_n(&next->waiting, static_cast<uint8_t>(0), __ATOMIC_RELEASE);
+		}
+
+		bool is_locked() const noexcept
+		{
+			return __atomic_load_n(&tail_, __ATOMIC_RELAXED) != nullptr;
+		}
+
+	private:
+		alignas(64) McsNode* tail_ = nullptr;
+		uint8_t padding_[64 - sizeof(McsNode*)] = {};
+	};
+
 	template<typename Lock>
 	class LockGuard
 	{
@@ -131,6 +200,55 @@ namespace kernel::lib
 
 	private:
 		Lock& lock_;
+		uint64_t rflags_;
+	};
+
+	class McsLockGuard
+	{
+	public:
+		McsLockGuard(McsLock& lock, McsNode& node) noexcept
+			: lock_(lock)
+			, node_(node)
+		{
+			lock_.lock(&node_);
+		}
+
+		McsLockGuard(const McsLockGuard&) = delete;
+		McsLockGuard& operator=(const McsLockGuard&) = delete;
+
+		~McsLockGuard()
+		{
+			lock_.unlock(&node_);
+		}
+
+	private:
+		McsLock& lock_;
+		McsNode& node_;
+	};
+
+	class IrqMcsLockGuard
+	{
+	public:
+		IrqMcsLockGuard(McsLock& lock, McsNode& node) noexcept
+			: lock_(lock)
+			, node_(node)
+			, rflags_(irq_save_disable())
+		{
+			lock_.lock(&node_);
+		}
+
+		IrqMcsLockGuard(const IrqMcsLockGuard&) = delete;
+		IrqMcsLockGuard& operator=(const IrqMcsLockGuard&) = delete;
+
+		~IrqMcsLockGuard()
+		{
+			lock_.unlock(&node_);
+			irq_restore(rflags_);
+		}
+
+	private:
+		McsLock& lock_;
+		McsNode& node_;
 		uint64_t rflags_;
 	};
 }
