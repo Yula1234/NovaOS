@@ -4,7 +4,7 @@
 #include "kernel/arch/x86_64/cpu.hpp"
 #include "kernel/boot/multiboot2.hpp"
 #include "kernel/log/log.hpp"
-#include "kernel/mm/ioremap.hpp"
+#include "kernel/mm/memremap.hpp"
 
 namespace
 {
@@ -194,7 +194,7 @@ namespace kernel::acpi
 			return false;
 		}
 
-		const auto* rsdp = static_cast<const Rsdp*>(kernel::mm::ioremap::map(rsdp_phys, sizeof(Rsdp)));
+		const auto* rsdp = static_cast<const Rsdp*>(kernel::mm::memremap::map(rsdp_phys, sizeof(Rsdp)));
 		if (!rsdp_valid(rsdp))
 		{
 			kernel::log::write_line("acpi rsdp invalid");
@@ -208,14 +208,14 @@ namespace kernel::acpi
 			return false;
 		}
 
-		const auto* xsdt_hdr = static_cast<const SdtHeader*>(kernel::mm::ioremap::map(xsdt_phys, sizeof(SdtHeader)));
+		const auto* xsdt_hdr = static_cast<const SdtHeader*>(kernel::mm::memremap::map(xsdt_phys, sizeof(SdtHeader)));
 		if (!xsdt_hdr || xsdt_hdr->length < sizeof(SdtHeader))
 		{
 			kernel::log::write_line("acpi xsdt header invalid");
 			return false;
 		}
 
-		const auto* xsdt_full = static_cast<const Xsdt*>(kernel::mm::ioremap::map(xsdt_phys, xsdt_hdr->length));
+		const auto* xsdt_full = static_cast<const Xsdt*>(kernel::mm::memremap::map(xsdt_phys, xsdt_hdr->length));
 		if (!sdt_valid(&xsdt_full->h))
 		{
 			kernel::log::write_line("acpi xsdt invalid");
@@ -229,13 +229,13 @@ namespace kernel::acpi
 		for (size_t i = 0; i < entries; ++i)
 		{
 			const uint64_t sdt_phys = xsdt_full->entries[i];
-			const auto* h = static_cast<const SdtHeader*>(kernel::mm::ioremap::map(sdt_phys, sizeof(SdtHeader)));
+			const auto* h = static_cast<const SdtHeader*>(kernel::mm::memremap::map(sdt_phys, sizeof(SdtHeader)));
 			if (!h || h->length < sizeof(SdtHeader))
 			{
 				continue;
 			}
 
-			const auto* full = static_cast<const SdtHeader*>(kernel::mm::ioremap::map(sdt_phys, h->length));
+			const auto* full = static_cast<const SdtHeader*>(kernel::mm::memremap::map(sdt_phys, h->length));
 			if (!sdt_valid(full))
 			{
 				continue;
@@ -264,10 +264,10 @@ namespace kernel::acpi
 		hpet_info = HpetInfo{};
 		if (hpet_phys != 0)
 		{
-			const auto* hpet_hdr = static_cast<const SdtHeader*>(kernel::mm::ioremap::map(hpet_phys, sizeof(SdtHeader)));
+			const auto* hpet_hdr = static_cast<const SdtHeader*>(kernel::mm::memremap::map(hpet_phys, sizeof(SdtHeader)));
 			if (hpet_hdr && hpet_hdr->length >= sizeof(HpetTable))
 			{
-				const auto* hpet_tbl = static_cast<const HpetTable*>(kernel::mm::ioremap::map(hpet_phys, hpet_hdr->length));
+				const auto* hpet_tbl = static_cast<const HpetTable*>(kernel::mm::memremap::map(hpet_phys, hpet_hdr->length));
 				if (sdt_valid(&hpet_tbl->h) && hpet_tbl->base_address.address_space == 0)
 				{
 					hpet_info.hpet_phys = hpet_tbl->base_address.address;
@@ -276,14 +276,14 @@ namespace kernel::acpi
 			}
 		}
 
-		const auto* madt_hdr = static_cast<const SdtHeader*>(kernel::mm::ioremap::map(madt_phys, sizeof(SdtHeader)));
+		const auto* madt_hdr = static_cast<const SdtHeader*>(kernel::mm::memremap::map(madt_phys, sizeof(SdtHeader)));
 		if (!madt_hdr || madt_hdr->length < sizeof(Madt))
 		{
 			kernel::log::write_line("acpi madt header invalid");
 			return false;
 		}
 
-		const auto* madt_full = static_cast<const Madt*>(kernel::mm::ioremap::map(madt_phys, madt_hdr->length));
+		const auto* madt_full = static_cast<const Madt*>(kernel::mm::memremap::map(madt_phys, madt_hdr->length));
 		if (!sdt_valid(&madt_full->h))
 		{
 			kernel::log::write_line("acpi madt invalid");

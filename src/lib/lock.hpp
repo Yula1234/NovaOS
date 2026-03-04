@@ -6,28 +6,56 @@ namespace kernel::lib
 {
 	inline uint64_t irq_save_disable() noexcept
 	{
-		uint64_t rflags = 0;
-		asm volatile(
-			"pushfq\n"
-			"pop %0\n"
-			"cli\n"
-			: "=r"(rflags)
-			:
-			: "memory"
-		);
+		uint32_t depth = 0;
+		asm volatile("mov %%gs:32, %0" : "=r"(depth) :: "memory");
 
-		return rflags;
+		if (depth == 0)
+		{
+			uint64_t rflags = 0;
+			asm volatile(
+				"pushfq\n"
+				"pop %0\n"
+				"cli\n"
+				: "=r"(rflags)
+				:
+				: "memory", "cc"
+			);
+
+			const uint64_t prev_if = (rflags >> 9) & 1ull;
+			const uint8_t prev_if8 = static_cast<uint8_t>(prev_if);
+			asm volatile("mov %0, %%gs:36" :: "r"(prev_if8) : "memory");
+			asm volatile("movl $1, %%gs:32" ::: "memory");
+			return prev_if;
+		}
+
+		asm volatile("cli" ::: "memory", "cc");
+		++depth;
+		asm volatile("mov %0, %%gs:32" :: "r"(depth) : "memory");
+		return 0;
 	}
 
 	inline void irq_restore(uint64_t rflags) noexcept
 	{
-		asm volatile(
-			"push %0\n"
-			"popfq\n"
-			:
-			: "r"(rflags)
-			: "memory", "cc"
-		);
+		uint32_t depth = 0;
+		asm volatile("mov %%gs:32, %0" : "=r"(depth) :: "memory");
+		if (depth == 0)
+		{
+			return;
+		}
+
+		--depth;
+		asm volatile("mov %0, %%gs:32" :: "r"(depth) : "memory");
+		if (depth != 0)
+		{
+			return;
+		}
+
+		uint8_t prev_if = 0;
+		asm volatile("mov %%gs:36, %0" : "=r"(prev_if) :: "memory");
+		if (prev_if != 0 && rflags != 0)
+		{
+			asm volatile("sti" ::: "memory", "cc");
+		}
 	}
 
 	class SpinLock

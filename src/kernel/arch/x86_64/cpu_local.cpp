@@ -36,6 +36,8 @@ namespace
 		data->kernel_stack = 0;
 		data->current_thread = 0;
 		data->per_cpu_heap_cache = nullptr;
+		data->irq_depth = 0;
+		data->irq_prev_if = 0;
 
 		return data;
 	}
@@ -51,6 +53,8 @@ namespace kernel::arch::x86_64::cpu_local
 		data->kernel_stack = 0;
 		data->current_thread = 0;
 		data->per_cpu_heap_cache = nullptr;
+		data->irq_depth = 0;
+		data->irq_prev_if = 0;
 
 		write_gs_base(reinterpret_cast<uint64_t>(data));
 		write_kernel_gs_base(0);
