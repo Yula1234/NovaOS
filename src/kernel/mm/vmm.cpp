@@ -298,127 +298,151 @@ namespace kernel::mm::vmm
 
 	bool AddressSpace::map_page(uint64_t virt, uint64_t phys, PageFlags flags) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(lock_);
-
-		if ((virt % page_size) != 0 || (phys % page_size) != 0)
+		uint64_t shoot_cr3 = 0;
+		bool ok = false;
 		{
-			return false;
+			kernel::lib::IrqMcsLockGuard guard(lock_);
+
+			if ((virt % page_size) != 0 || (phys % page_size) != 0)
+			{
+				return false;
+			}
+
+			const uint64_t pml4_i = pml4_index(virt);
+			const uint64_t pdpt_i = pdpt_index(virt);
+			const uint64_t pd_i = pd_index(virt);
+			const uint64_t pt_i = pt_index(virt);
+
+			const uint64_t table_flags = bit_present | bit_writable;
+
+			const uint64_t pdpt_phys = ensure_table(pml4_phys_, pml4_i, table_flags);
+			if (!pdpt_phys)
+			{
+				return false;
+			}
+
+			const uint64_t pd_phys = ensure_table(pdpt_phys, pdpt_i, table_flags);
+			if (!pd_phys)
+			{
+				return false;
+			}
+
+			const uint64_t pt_phys = ensure_table(pd_phys, pd_i, table_flags);
+			if (!pt_phys)
+			{
+				return false;
+			}
+
+			auto* pt = table_virt(pt_phys);
+			pt[pt_i] = make_entry(phys, flags | PageFlags::Present);
+
+			shoot_cr3 = pml4_phys_;
+			ok = true;
 		}
 
-		const uint64_t pml4_i = pml4_index(virt);
-		const uint64_t pdpt_i = pdpt_index(virt);
-		const uint64_t pd_i = pd_index(virt);
-		const uint64_t pt_i = pt_index(virt);
-
-		const uint64_t table_flags = bit_present | bit_writable;
-
-		const uint64_t pdpt_phys = ensure_table(pml4_phys_, pml4_i, table_flags);
-		if (!pdpt_phys)
+		if (ok)
 		{
-			return false;
+			kernel::arch::x86_64::tlb::shootdown_page(shoot_cr3, virt);
 		}
 
-		const uint64_t pd_phys = ensure_table(pdpt_phys, pdpt_i, table_flags);
-		if (!pd_phys)
-		{
-			return false;
-		}
-
-		const uint64_t pt_phys = ensure_table(pd_phys, pd_i, table_flags);
-		if (!pt_phys)
-		{
-			return false;
-		}
-
-		auto* pt = table_virt(pt_phys);
-		pt[pt_i] = make_entry(phys, flags | PageFlags::Present);
-
-		kernel::arch::x86_64::tlb::shootdown_page(pml4_phys_, virt);
-		return true;
+		return ok;
 	}
 
 	bool AddressSpace::unmap_page(uint64_t virt) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(lock_);
-
-		if ((virt % page_size) != 0)
+		uint64_t shoot_cr3 = 0;
+		bool ok = false;
 		{
-			return false;
-		}
+			kernel::lib::IrqMcsLockGuard guard(lock_);
 
-		const uint64_t pml4_i = pml4_index(virt);
-		const uint64_t pdpt_i = pdpt_index(virt);
-		const uint64_t pd_i = pd_index(virt);
-		const uint64_t pt_i = pt_index(virt);
-
-		auto* pml4 = table_virt(pml4_phys_);
-		const uint64_t pml4e = pml4[pml4_i];
-		if (!entry_present(pml4e) || entry_is_large(pml4e))
-		{
-			return false;
-		}
-
-		const uint64_t pdpt_phys = entry_addr(pml4e);
-		auto* pdpt = table_virt(pdpt_phys);
-		const uint64_t pdpte = pdpt[pdpt_i];
-		if (!entry_present(pdpte) || entry_is_large(pdpte))
-		{
-			return false;
-		}
-
-		const uint64_t pd_phys = entry_addr(pdpte);
-		auto* pd = table_virt(pd_phys);
-		const uint64_t pde = pd[pd_i];
-		if (!entry_present(pde))
-		{
-			return false;
-		}
-
-		if (entry_is_large(pde))
-		{
-			pd[pd_i] = 0;
-			kernel::arch::x86_64::tlb::shootdown_page(pml4_phys_, virt);
-
-			if (table_empty(pd_phys))
+			if ((virt % page_size) != 0)
 			{
-				remove_table_if_empty(pdpt_phys, pdpt_i);
+				return false;
 			}
 
-			if (table_empty(pdpt_phys))
+			const uint64_t pml4_i = pml4_index(virt);
+			const uint64_t pdpt_i = pdpt_index(virt);
+			const uint64_t pd_i = pd_index(virt);
+			const uint64_t pt_i = pt_index(virt);
+
+			auto* pml4 = table_virt(pml4_phys_);
+			const uint64_t pml4e = pml4[pml4_i];
+			if (!entry_present(pml4e) || entry_is_large(pml4e))
 			{
-				remove_table_if_empty(pml4_phys_, pml4_i);
+				return false;
 			}
 
-			return true;
+			const uint64_t pdpt_phys = entry_addr(pml4e);
+			auto* pdpt = table_virt(pdpt_phys);
+			const uint64_t pdpte = pdpt[pdpt_i];
+			if (!entry_present(pdpte) || entry_is_large(pdpte))
+			{
+				return false;
+			}
+
+			const uint64_t pd_phys = entry_addr(pdpte);
+			auto* pd = table_virt(pd_phys);
+			const uint64_t pde = pd[pd_i];
+			if (!entry_present(pde))
+			{
+				return false;
+			}
+
+			if (entry_is_large(pde))
+			{
+				pd[pd_i] = 0;
+
+				if (table_empty(pd_phys))
+				{
+					remove_table_if_empty(pdpt_phys, pdpt_i);
+				}
+
+				if (table_empty(pdpt_phys))
+				{
+					remove_table_if_empty(pml4_phys_, pml4_i);
+				}
+
+				shoot_cr3 = pml4_phys_;
+				ok = true;
+			}
+			else
+			{
+				const uint64_t pt_phys = entry_addr(pde);
+				auto* pt = table_virt(pt_phys);
+				const uint64_t pte = pt[pt_i];
+				if (!entry_present(pte))
+				{
+					return false;
+				}
+
+				pt[pt_i] = 0;
+
+				if (table_empty(pt_phys))
+				{
+					remove_table_if_empty(pd_phys, pd_i);
+				}
+
+				if (table_empty(pd_phys))
+				{
+					remove_table_if_empty(pdpt_phys, pdpt_i);
+				}
+
+				if (table_empty(pdpt_phys))
+				{
+					remove_table_if_empty(pml4_phys_, pml4_i);
+				}
+
+				shoot_cr3 = pml4_phys_;
+				ok = true;
+			}
 		}
 
-		const uint64_t pt_phys = entry_addr(pde);
-		auto* pt = table_virt(pt_phys);
-		const uint64_t pte = pt[pt_i];
-		if (!entry_present(pte))
+		if (ok)
 		{
-			return false;
+			kernel::arch::x86_64::tlb::shootdown_page(shoot_cr3, virt);
 		}
 
-		pt[pt_i] = 0;
-		kernel::arch::x86_64::tlb::shootdown_page(pml4_phys_, virt);
-
-		if (table_empty(pt_phys))
-		{
-			remove_table_if_empty(pd_phys, pd_i);
-		}
-
-		if (table_empty(pd_phys))
-		{
-			remove_table_if_empty(pdpt_phys, pdpt_i);
-		}
-
-		if (table_empty(pdpt_phys))
-		{
-			remove_table_if_empty(pml4_phys_, pml4_i);
-		}
-
-		return true;
+		return ok;
 	}
 
 	uint64_t AddressSpace::translate(uint64_t virt) const noexcept
