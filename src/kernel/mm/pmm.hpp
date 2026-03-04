@@ -47,7 +47,7 @@ namespace kernel::mm::pmm
 	{
 		std::atomic<uint32_t> refcount{0};
 		uint8_t order{0};
-		PageFlags flags{PageFlags::None};
+		std::atomic<uint8_t> flags{static_cast<uint8_t>(PageFlags::None)};
 		uint8_t reserved{0};
 		uint32_t prev_page{0};
 		uint32_t next_page{0};

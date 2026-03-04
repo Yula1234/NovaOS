@@ -31,7 +31,7 @@ namespace
 	uint64_t page_count = 0;
 	uint32_t max_order = 0;
 
-	uint64_t alloc_limit_bytes = early_mapped_limit;
+	std::atomic<uint64_t> alloc_limit_bytes{early_mapped_limit};
 	kernel::lib::McsLock pmm_lock;
 
 	struct Zone
@@ -48,7 +48,7 @@ namespace
 
 	struct PerCpuCache
 	{
-		uint32_t count{0};
+		std::atomic<uint32_t> count{0};
 		uint64_t pages[pcp_capacity];
 	};
 
@@ -134,32 +134,67 @@ namespace
 
 	bool is_allocated(uint32_t page_index) noexcept
 	{
-		return (page_meta[page_index].flags & kernel::mm::pmm::PageFlags::Allocated) != kernel::mm::pmm::PageFlags::None;
-	}
-
-	void set_allocated(uint32_t page_index) noexcept
-	{
-		page_meta[page_index].flags |= kernel::mm::pmm::PageFlags::Allocated;
+		const uint8_t v = page_meta[page_index].flags.load(std::memory_order_relaxed);
+		return (v & static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated)) != 0;
 	}
 
 	void clear_allocated(uint32_t page_index) noexcept
 	{
-		page_meta[page_index].flags &= ~kernel::mm::pmm::PageFlags::Allocated;
+		page_meta[page_index].flags.fetch_and(static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Allocated), std::memory_order_relaxed);
 	}
 
 	bool is_reserved(uint32_t page_index) noexcept
 	{
-		return (page_meta[page_index].flags & kernel::mm::pmm::PageFlags::Reserved) != kernel::mm::pmm::PageFlags::None;
+		const uint8_t v = page_meta[page_index].flags.load(std::memory_order_relaxed);
+		return (v & static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Reserved)) != 0;
 	}
 
 	void set_reserved(uint32_t page_index) noexcept
 	{
-		page_meta[page_index].flags |= kernel::mm::pmm::PageFlags::Reserved;
+		page_meta[page_index].flags.fetch_or(static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Reserved), std::memory_order_relaxed);
 	}
 
 	void clear_reserved(uint32_t page_index) noexcept
 	{
-		page_meta[page_index].flags &= ~kernel::mm::pmm::PageFlags::Reserved;
+		page_meta[page_index].flags.fetch_and(static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Reserved), std::memory_order_relaxed);
+	}
+
+	bool try_set_allocated(uint32_t page_index) noexcept
+	{
+		uint8_t expected = page_meta[page_index].flags.load(std::memory_order_relaxed);
+		for (;;)
+		{
+			const uint8_t blocked_mask = static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated) |
+				static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Reserved);
+			if ((expected & blocked_mask) != 0)
+			{
+				return false;
+			}
+
+			const uint8_t desired = static_cast<uint8_t>(expected | static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated));
+			if (page_meta[page_index].flags.compare_exchange_weak(expected, desired, std::memory_order_relaxed, std::memory_order_relaxed))
+			{
+				return true;
+			}
+		}
+	}
+
+	bool try_clear_allocated(uint32_t page_index) noexcept
+	{
+		uint8_t expected = page_meta[page_index].flags.load(std::memory_order_relaxed);
+		for (;;)
+		{
+			if ((expected & static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated)) == 0)
+			{
+				return false;
+			}
+
+			const uint8_t desired = static_cast<uint8_t>(expected & static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Allocated));
+			if (page_meta[page_index].flags.compare_exchange_weak(expected, desired, std::memory_order_relaxed, std::memory_order_relaxed))
+			{
+				return true;
+			}
+		}
 	}
 
 	uint8_t get_order_meta(uint32_t page_index) noexcept
@@ -429,7 +464,7 @@ namespace
 
 		for (uint32_t cpu = 0; cpu < max_apic_id; ++cpu)
 		{
-			total += static_cast<uint64_t>(pcp[cpu].count);
+			total += static_cast<uint64_t>(pcp[cpu].count.load(std::memory_order_relaxed));
 		}
 
 		return total;
@@ -442,14 +477,16 @@ namespace
 
 		const uint64_t rflags = kernel::lib::irq_save_disable();
 
-		if (cache.count == 0)
+		uint32_t count = cache.count.load(std::memory_order_relaxed);
+		if (count == 0)
 		{
 			kernel::lib::irq_restore(rflags);
 			return false;
 		}
 
-		--cache.count;
-		out_phys = cache.pages[cache.count];
+		--count;
+		out_phys = cache.pages[count];
+		cache.count.store(count, std::memory_order_relaxed);
 
 		kernel::lib::irq_restore(rflags);
 		return true;
@@ -462,14 +499,16 @@ namespace
 
 		const uint64_t rflags = kernel::lib::irq_save_disable();
 
-		if (cache.count >= pcp_capacity)
+		uint32_t count = cache.count.load(std::memory_order_relaxed);
+		if (count >= pcp_capacity)
 		{
 			kernel::lib::irq_restore(rflags);
 			return false;
 		}
 
-		cache.pages[cache.count] = phys;
-		++cache.count;
+		cache.pages[count] = phys;
+		++count;
+		cache.count.store(count, std::memory_order_relaxed);
 
 		kernel::lib::irq_restore(rflags);
 		return true;
@@ -744,14 +783,15 @@ namespace kernel::mm::pmm
 			set_reserved(static_cast<uint32_t>(i));
 		}
 
-		alloc_limit_bytes = early_mapped_limit;
+		alloc_limit_bytes.store(early_mapped_limit, std::memory_order_relaxed);
 		unreserve_available(multiboot);
 
 		mark_reserved_range(0, page_size);
 		mark_reserved_range(kernel_phys_start(), kernel_phys_end());
 		mark_reserved_range(metadata_phys, metadata_phys + metadata_bytes);
 
-		const uint64_t limit_pages64 = alloc_limit_bytes == ~0ull ? page_count : (alloc_limit_bytes / page_size);
+		const uint64_t limit_bytes = alloc_limit_bytes.load(std::memory_order_relaxed);
+		const uint64_t limit_pages64 = limit_bytes == ~0ull ? page_count : (limit_bytes / page_size);
 		const uint32_t limit_pages = static_cast<uint32_t>(limit_pages64 > page_count ? page_count : limit_pages64);
 		const uint32_t dma_pages = static_cast<uint32_t>(dma_limit_bytes / page_size);
 		const uint32_t dma_end = dma_pages < limit_pages ? dma_pages : limit_pages;
@@ -789,7 +829,7 @@ namespace kernel::mm::pmm
 		kernel::log::write(" free=");
 		kernel::log::write_u64_dec(total_free_pages());
 		kernel::log::write(" limit=");
-		kernel::log::write_u64_hex(alloc_limit_bytes);
+		kernel::log::write_u64_hex(alloc_limit_bytes.load(std::memory_order_relaxed));
 		kernel::log::write(" metadata=");
 		kernel::log::write_u64_hex(metadata_phys);
 		kernel::log::write(" metadata_bytes=");
@@ -799,25 +839,21 @@ namespace kernel::mm::pmm
 
 	Stats stats() noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-
 		return Stats{
 			.total_pages = page_count,
 			.free_pages = total_free_pages(),
-			.alloc_limit_bytes = alloc_limit_bytes,
+			.alloc_limit_bytes = alloc_limit_bytes.load(std::memory_order_relaxed),
 		};
 	}
 
 	uint64_t alloc_limit() noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-		return alloc_limit_bytes;
+		return alloc_limit_bytes.load(std::memory_order_relaxed);
 	}
 
 	void set_alloc_limit(uint64_t limit_bytes) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-		alloc_limit_bytes = limit_bytes;
+		alloc_limit_bytes.store(limit_bytes, std::memory_order_relaxed);
 	}
 
 	uint64_t alloc_page() noexcept
@@ -826,42 +862,41 @@ namespace kernel::mm::pmm
 		if (pcp_pop(cached))
 		{
 			const uint32_t index = static_cast<uint32_t>(cached / page_size);
-			if (index < page_count && !is_allocated(index) && !is_reserved(index) && cached < alloc_limit_bytes)
+			const uint64_t limit = alloc_limit_bytes.load(std::memory_order_relaxed);
+			if (index < page_count && cached < limit && try_set_allocated(index))
 			{
-				kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-				set_allocated(index);
 				return cached;
 			}
 		}
 
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-
-		Zone& z = pick_zone_for_alloc(false);
-		uint32_t block = alloc_block(z, 0);
+		Zone* z = &pick_zone_for_alloc(false);
+		uint32_t block = alloc_block(*z, 0);
 		if (block == null_page_index)
 		{
-			Zone& dma = zones[0];
-			block = alloc_block(dma, 0);
+			z = &zones[0];
+			block = alloc_block(*z, 0);
 			if (block == null_page_index)
 			{
 				return 0;
 			}
 		}
 
-		set_allocated(block);
+		if (!try_set_allocated(block))
+		{
+			free_block(*z, block, 0);
+			return 0;
+		}
 		return static_cast<uint64_t>(block) * page_size;
 	}
 
 	uint64_t alloc_page_at(uint64_t phys_addr) noexcept
 	{
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-
 		if ((phys_addr % page_size) != 0)
 		{
 			return 0;
 		}
 
-		if (phys_addr >= alloc_limit_bytes)
+		if (phys_addr >= alloc_limit_bytes.load(std::memory_order_relaxed))
 		{
 			return 0;
 		}
@@ -872,7 +907,7 @@ namespace kernel::mm::pmm
 			return 0;
 		}
 
-		if (is_allocated(index) || is_reserved(index))
+		if (!try_set_allocated(index))
 		{
 			return 0;
 		}
@@ -880,15 +915,15 @@ namespace kernel::mm::pmm
 		Zone& z = pick_zone_for_page(index);
 		if (!zone_contains(z, index))
 		{
+			clear_allocated(index);
 			return 0;
 		}
 
 		if (!alloc_block_at(z, index))
 		{
+			clear_allocated(index);
 			return 0;
 		}
-
-		set_allocated(index);
 
 		return phys_addr;
 	}
@@ -906,14 +941,9 @@ namespace kernel::mm::pmm
 			return;
 		}
 
+		if (!try_clear_allocated(index))
 		{
-			kernel::lib::IrqMcsLockGuard guard(pmm_lock);
-			if (!is_allocated(index))
-			{
-				return;
-			}
-
-			clear_allocated(index);
+			return;
 		}
 
 		if (pcp_push(phys_addr))
@@ -921,7 +951,6 @@ namespace kernel::mm::pmm
 			return;
 		}
 
-		kernel::lib::IrqMcsLockGuard guard(pmm_lock);
 		Zone& z = pick_zone_for_page(index);
 		free_block(z, index, 0);
 	}
