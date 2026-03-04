@@ -25,6 +25,8 @@
 #include "kernel/mm/vmm.hpp"
 #include "kernel/mm/heap.hpp"
 
+#include "kernel/mm/vmar.hpp"
+
 #include "kernel/runtime/init_array.hpp"
 
 extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
@@ -90,17 +92,30 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 		kernel::mm::pmm::set_alloc_limit(~0ull);
 		kernel::mm::ioremap::init();
 		kernel::mm::heap::init();
+		kernel::mm::vmar::init();
 		kernel::runtime::init_global_constructors();
 
 		constexpr uint64_t test_virt = 0xFFFFFE0000100000ull;
 		const uint64_t test_phys = kernel::mm::pmm::alloc_page();
 		if (test_phys != 0)
 		{
-			kernel::mm::vmm::kernel_space().map_page(
+			const bool mapped = kernel::mm::vmm::kernel_space().map_page(
 				test_virt,
 				test_phys,
 				kernel::mm::vmm::PageFlags::Writable
 			);
+			if (!mapped)
+			{
+				kernel::log::write_line("vmm test map_page failed");
+				kernel::arch::x86_64::halt_forever();
+			}
+
+			const uint64_t translated = kernel::mm::vmm::kernel_space().translate(test_virt);
+			if (translated == 0)
+			{
+				kernel::log::write_line("vmm test translate failed");
+				kernel::arch::x86_64::halt_forever();
+			}
 
 			auto* p = reinterpret_cast<volatile uint64_t*>(test_virt);
 			*p = 0x1122334455667788ull;
@@ -108,7 +123,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 			kernel::log::write("vmm test read=");
 			kernel::log::write_u64_hex(*p);
 			kernel::log::write(" phys=");
-			kernel::log::write_u64_hex(kernel::mm::vmm::kernel_space().translate(test_virt));
+			kernel::log::write_u64_hex(translated);
 			kernel::log::write("\n", 1);
 
 			kernel::mm::vmm::kernel_space().unmap_page(test_virt);

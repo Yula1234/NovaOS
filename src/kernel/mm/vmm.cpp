@@ -403,16 +403,6 @@ namespace
 
 namespace kernel::mm::vmm
 {
-	AddressSpace::AddressSpace() noexcept
-		: pml4_phys_(0)
-	{
-	}
-
-	AddressSpace::AddressSpace(uint64_t pml4_phys) noexcept
-		: pml4_phys_(pml4_phys & addr_mask)
-	{
-	}
-
 	void AddressSpace::reset(uint64_t pml4_phys) noexcept
 	{
 		kernel::lib::IrqMcsLockGuard guard(lock_);
@@ -744,7 +734,9 @@ namespace kernel::mm::vmm
 			}
 		}
 
-		kernel::log::write("physmap expanded max=");
+		kernel::log::write("physmap expanded early_limit=");
+		kernel::log::write_u64_hex(early_mapped_limit);
+		kernel::log::write(" max=");
 		kernel::log::write_u64_hex(mapped_max);
 		kernel::log::write("\n", 1);
 	}

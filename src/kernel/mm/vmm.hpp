@@ -30,8 +30,7 @@ namespace kernel::mm::vmm
 	class AddressSpace
 	{
 	public:
-		AddressSpace() noexcept;
-		explicit AddressSpace(uint64_t pml4_phys) noexcept;
+		AddressSpace() noexcept = default;
 
 		void reset(uint64_t pml4_phys) noexcept;
 
@@ -45,7 +44,7 @@ namespace kernel::mm::vmm
 		void activate() const noexcept;
 
 	private:
-		uint64_t pml4_phys_;
+		uint64_t pml4_phys_ = 0;
 		mutable kernel::lib::McsLock lock_;
 	};
 
