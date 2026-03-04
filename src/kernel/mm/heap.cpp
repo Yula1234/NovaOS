@@ -1,6 +1,5 @@
 #include "kernel/mm/heap.hpp"
 
-#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -76,7 +75,7 @@ namespace
 
 	struct PerCpuClassCache
 	{
-		std::atomic<uint32_t> count{0};
+		uint32_t count{0};
 		void* objects[per_cpu_obj_capacity];
 	};
 
@@ -121,10 +120,9 @@ namespace
 		auto& list = classes[class_i];
 		auto& c = per_cpu_cache[cpu_index()][class_i];
 
-		kernel::lib::IrqMcsLockGuard class_guard(list.lock);
+		const uint64_t rflags = kernel::lib::irq_save_disable();
 
-		uint32_t count = c.count.load(std::memory_order_relaxed);
-		while (count < per_cpu_obj_capacity)
+		while (c.count < per_cpu_obj_capacity)
 		{
 			void* obj = alloc_from_class_locked(list, class_i);
 			if (!obj)
@@ -132,12 +130,14 @@ namespace
 				break;
 			}
 
-			c.objects[count] = obj;
-			c.count.store(count + 1, std::memory_order_release);
-			count = count + 1;
+			c.objects[c.count] = obj;
+			++c.count;
 		}
 
-		return count != 0;
+		const bool result = c.count != 0;
+
+		kernel::lib::irq_restore(rflags);
+		return result;
 	}
 
 	void drain_cache(size_t class_i, uint32_t drain_count) noexcept
@@ -149,17 +149,19 @@ namespace
 		uint32_t count = 0;
 
 		{
-			uint32_t cur = c.count.load(std::memory_order_relaxed);
+			const uint64_t rflags = kernel::lib::irq_save_disable();
+
+			const uint32_t cur = c.count;
 			const uint32_t to_drain = drain_count < cur ? drain_count : cur;
-			while (cur > 0 && count < to_drain)
+
+			while (count < to_drain)
 			{
-				if (c.count.compare_exchange_weak(cur, cur - 1, std::memory_order_acquire, std::memory_order_relaxed))
-				{
-					to_free[count] = c.objects[cur - 1];
-					++count;
-					cur = c.count.load(std::memory_order_relaxed);
-				}
+				--c.count;
+				to_free[count] = c.objects[c.count];
+				++count;
 			}
+
+			kernel::lib::irq_restore(rflags);
 		}
 
 		if (count == 0)
@@ -522,44 +524,38 @@ namespace
 	{
 		auto& c = per_cpu_cache[cpu_index()][class_i];
 
-		uint32_t count = c.count.load(std::memory_order_relaxed);
-		if (count == 0)
+		const uint64_t rflags = kernel::lib::irq_save_disable();
+
+		if (c.count == 0)
 		{
+			kernel::lib::irq_restore(rflags);
 			return false;
 		}
 
-		while (count > 0)
-		{
-			if (c.count.compare_exchange_weak(count, count - 1, std::memory_order_acquire, std::memory_order_relaxed))
-			{
-				out = c.objects[count - 1];
-				return true;
-			}
-		}
+		--c.count;
+		out = c.objects[c.count];
 
-		return false;
+		kernel::lib::irq_restore(rflags);
+		return true;
 	}
 
 	bool cache_push(size_t class_i, void* ptr) noexcept
 	{
 		auto& c = per_cpu_cache[cpu_index()][class_i];
 
-		uint32_t count = c.count.load(std::memory_order_relaxed);
-		if (count >= per_cpu_obj_capacity)
+		const uint64_t rflags = kernel::lib::irq_save_disable();
+
+		if (c.count >= per_cpu_obj_capacity)
 		{
+			kernel::lib::irq_restore(rflags);
 			return false;
 		}
 
-		while (count < per_cpu_obj_capacity)
-		{
-			if (c.count.compare_exchange_weak(count, count + 1, std::memory_order_acquire, std::memory_order_relaxed))
-			{
-				c.objects[count] = ptr;
-				return true;
-			}
-		}
+		c.objects[c.count] = ptr;
+		++c.count;
 
-		return false;
+		kernel::lib::irq_restore(rflags);
+		return true;
 	}
 
 	void free_to_slab(void* ptr) noexcept
@@ -670,7 +666,7 @@ namespace kernel::mm::heap
 		{
 			for (size_t ci = 0; ci < class_count; ++ci)
 			{
-				per_cpu_cache[cpu][ci].count.store(0, std::memory_order_relaxed);
+				per_cpu_cache[cpu][ci].count = 0;
 			}
 		}
 

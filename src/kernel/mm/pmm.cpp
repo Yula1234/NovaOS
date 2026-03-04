@@ -1,6 +1,5 @@
 #include "kernel/mm/pmm.hpp"
 
-#include <atomic>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,7 +36,7 @@ namespace
 
 	struct PerCpuCache
 	{
-		std::atomic<uint32_t> count{0};
+		uint32_t count{0};
 		uint64_t pages[pcp_capacity];
 	};
 
@@ -375,22 +374,19 @@ namespace
 		const uint32_t cpu = current_cpu_index();
 		auto& cache = pcp[cpu];
 
-		uint32_t count = cache.count.load(std::memory_order_relaxed);
-		if (count == 0)
+		const uint64_t rflags = kernel::lib::irq_save_disable();
+
+		if (cache.count == 0)
 		{
+			kernel::lib::irq_restore(rflags);
 			return false;
 		}
 
-		while (count > 0)
-		{
-			if (cache.count.compare_exchange_weak(count, count - 1, std::memory_order_acquire, std::memory_order_relaxed))
-			{
-				out_phys = cache.pages[count - 1];
-				return true;
-			}
-		}
+		--cache.count;
+		out_phys = cache.pages[cache.count];
 
-		return false;
+		kernel::lib::irq_restore(rflags);
+		return true;
 	}
 
 	bool pcp_push(uint64_t phys) noexcept
@@ -398,22 +394,19 @@ namespace
 		const uint32_t cpu = current_cpu_index();
 		auto& cache = pcp[cpu];
 
-		uint32_t count = cache.count.load(std::memory_order_relaxed);
-		if (count >= pcp_capacity)
+		const uint64_t rflags = kernel::lib::irq_save_disable();
+
+		if (cache.count >= pcp_capacity)
 		{
+			kernel::lib::irq_restore(rflags);
 			return false;
 		}
 
-		while (count < pcp_capacity)
-		{
-			if (cache.count.compare_exchange_weak(count, count + 1, std::memory_order_acquire, std::memory_order_relaxed))
-			{
-				cache.pages[count] = phys;
-				return true;
-			}
-		}
+		cache.pages[cache.count] = phys;
+		++cache.count;
 
-		return false;
+		kernel::lib::irq_restore(rflags);
+		return true;
 	}
 
 	void mark_available_range(uint32_t start_page, uint32_t len_pages) noexcept
