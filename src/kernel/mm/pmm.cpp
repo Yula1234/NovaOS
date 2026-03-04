@@ -138,6 +138,11 @@ namespace
 		return (v & static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated)) != 0;
 	}
 
+	void set_allocated(uint32_t page_index) noexcept
+	{
+		page_meta[page_index].flags.fetch_or(static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated), std::memory_order_relaxed);
+	}
+
 	void clear_allocated(uint32_t page_index) noexcept
 	{
 		page_meta[page_index].flags.fetch_and(static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Allocated), std::memory_order_relaxed);
@@ -157,26 +162,6 @@ namespace
 	void clear_reserved(uint32_t page_index) noexcept
 	{
 		page_meta[page_index].flags.fetch_and(static_cast<uint8_t>(~kernel::mm::pmm::PageFlags::Reserved), std::memory_order_relaxed);
-	}
-
-	bool try_set_allocated(uint32_t page_index) noexcept
-	{
-		uint8_t expected = page_meta[page_index].flags.load(std::memory_order_relaxed);
-		for (;;)
-		{
-			const uint8_t blocked_mask = static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated) |
-				static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Reserved);
-			if ((expected & blocked_mask) != 0)
-			{
-				return false;
-			}
-
-			const uint8_t desired = static_cast<uint8_t>(expected | static_cast<uint8_t>(kernel::mm::pmm::PageFlags::Allocated));
-			if (page_meta[page_index].flags.compare_exchange_weak(expected, desired, std::memory_order_relaxed, std::memory_order_relaxed))
-			{
-				return true;
-			}
-		}
 	}
 
 	bool try_clear_allocated(uint32_t page_index) noexcept
@@ -863,29 +848,26 @@ namespace kernel::mm::pmm
 		{
 			const uint32_t index = static_cast<uint32_t>(cached / page_size);
 			const uint64_t limit = alloc_limit_bytes.load(std::memory_order_relaxed);
-			if (index < page_count && cached < limit && try_set_allocated(index))
+			if (index < page_count && cached < limit && !is_reserved(index) && !is_allocated(index))
 			{
+				set_allocated(index);
 				return cached;
 			}
 		}
 
-		Zone* z = &pick_zone_for_alloc(false);
-		uint32_t block = alloc_block(*z, 0);
+		Zone& z = pick_zone_for_alloc(false);
+		uint32_t block = alloc_block(z, 0);
 		if (block == null_page_index)
 		{
-			z = &zones[0];
-			block = alloc_block(*z, 0);
+			Zone& dma = zones[0];
+			block = alloc_block(dma, 0);
 			if (block == null_page_index)
 			{
 				return 0;
 			}
 		}
 
-		if (!try_set_allocated(block))
-		{
-			free_block(*z, block, 0);
-			return 0;
-		}
+		set_allocated(block);
 		return static_cast<uint64_t>(block) * page_size;
 	}
 
@@ -907,7 +889,7 @@ namespace kernel::mm::pmm
 			return 0;
 		}
 
-		if (!try_set_allocated(index))
+		if (is_allocated(index) || is_reserved(index))
 		{
 			return 0;
 		}
@@ -915,15 +897,15 @@ namespace kernel::mm::pmm
 		Zone& z = pick_zone_for_page(index);
 		if (!zone_contains(z, index))
 		{
-			clear_allocated(index);
 			return 0;
 		}
 
 		if (!alloc_block_at(z, index))
 		{
-			clear_allocated(index);
 			return 0;
 		}
+
+		set_allocated(index);
 
 		return phys_addr;
 	}
