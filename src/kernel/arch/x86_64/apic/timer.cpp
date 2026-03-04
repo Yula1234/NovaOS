@@ -18,8 +18,8 @@ namespace
 
 	constexpr uint8_t vector_timer = 0x30;
 
-	std::atomic<uint64_t> tick_counter{0};
 	std::atomic<uint64_t> tick_counter_per_cpu[256]{};
+	uint8_t bsp_apic_id = 0;
 	uint32_t active_hz = 0;
 	uint32_t ticks_per_ms = 0;
 	uint32_t calibrated_init_count = 0;
@@ -27,7 +27,6 @@ namespace
 
 	void on_tick() noexcept
 	{
-		tick_counter.fetch_add(1, std::memory_order_relaxed);
 		const uint32_t apic_id = kernel::arch::x86_64::apic::lapic::id() & 0xFFu;
 		tick_counter_per_cpu[apic_id].fetch_add(1, std::memory_order_relaxed);
 		kernel::arch::x86_64::apic::lapic::eoi();
@@ -38,7 +37,7 @@ namespace kernel::arch::x86_64::apic::timer
 {
 	uint64_t ticks() noexcept
 	{
-		return tick_counter.load(std::memory_order_relaxed);
+		return ticks_cpu(bsp_apic_id);
 	}
 
 	uint64_t ticks_cpu(uint32_t apic_id) noexcept
@@ -91,6 +90,8 @@ namespace kernel::arch::x86_64::apic::timer
 			kernel::log::write_line("apic timer needs hpet");
 			return false;
 		}
+
+		bsp_apic_id = static_cast<uint8_t>(kernel::arch::x86_64::apic::lapic::id() & 0xFFu);
 
 		constexpr uint32_t calib_ms = 100;
 		const uint64_t calib_ns = static_cast<uint64_t>(calib_ms) * 1000ull * 1000ull;

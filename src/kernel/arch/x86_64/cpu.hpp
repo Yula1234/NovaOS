@@ -70,6 +70,21 @@ namespace kernel::arch::x86_64
 		asm volatile("invlpg (%0)" : : "r"(address) : "memory");
 	}
 
+	inline uint64_t rdtsc() noexcept
+	{
+		uint32_t lo = 0;
+		uint32_t hi = 0;
+		asm volatile(
+			"lfence\n"
+			"rdtsc\n"
+			: "=a"(lo), "=d"(hi)
+			:
+			: "memory"
+		);
+
+		return (static_cast<uint64_t>(hi) << 32) | lo;
+	}
+
 	inline void cpuid(uint32_t leaf, uint32_t subleaf, uint32_t& eax, uint32_t& ebx, uint32_t& ecx, uint32_t& edx) noexcept
 	{
 		asm volatile(

@@ -181,11 +181,11 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 		{
 			last_second_tick = current;
 
-			// kernel::log::write("tick ");
-			// kernel::log::write_u64_dec(current);
-			// kernel::log::write(" ms=");
-			// kernel::log::write_u64_dec(kernel::time::ms_since_time_init());
-			// kernel::log::write("\n", 1);
+			kernel::log::write("tick ");
+			kernel::log::write_u64_dec(current);
+			kernel::log::write(" ms=");
+			kernel::log::write_u64_dec(kernel::time::ms_since_time_init());
+			kernel::log::write("\n", 1);
 		}
 
 		asm volatile("hlt");
