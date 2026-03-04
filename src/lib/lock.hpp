@@ -4,6 +4,32 @@
 
 namespace kernel::lib
 {
+	inline uint64_t irq_save_disable() noexcept
+	{
+		uint64_t rflags = 0;
+		asm volatile(
+			"pushfq\n"
+			"pop %0\n"
+			"cli\n"
+			: "=r"(rflags)
+			:
+			: "memory"
+		);
+
+		return rflags;
+	}
+
+	inline void irq_restore(uint64_t rflags) noexcept
+	{
+		asm volatile(
+			"push %0\n"
+			"popfq\n"
+			:
+			: "r"(rflags)
+			: "memory", "cc"
+		);
+	}
+
 	class SpinLock
 	{
 	public:
@@ -66,5 +92,30 @@ namespace kernel::lib
 
 	private:
 		Lock& lock_;
+	};
+
+	template<typename Lock>
+	class IrqLockGuard
+	{
+	public:
+		explicit IrqLockGuard(Lock& lock) noexcept
+			: lock_(lock)
+			, rflags_(irq_save_disable())
+		{
+			lock_.lock();
+		}
+
+		IrqLockGuard(const IrqLockGuard&) = delete;
+		IrqLockGuard& operator=(const IrqLockGuard&) = delete;
+
+		~IrqLockGuard()
+		{
+			lock_.unlock();
+			irq_restore(rflags_);
+		}
+
+	private:
+		Lock& lock_;
+		uint64_t rflags_;
 	};
 }

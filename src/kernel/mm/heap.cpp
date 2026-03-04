@@ -258,7 +258,7 @@ namespace kernel::mm::heap
 {
 	void init() noexcept
 	{
-		kernel::lib::LockGuard<kernel::lib::SpinLock> guard(heap_lock);
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(heap_lock);
 
 		next_heap_virt = heap_base;
 
@@ -281,7 +281,7 @@ namespace kernel::mm::heap
 			size = 1;
 		}
 
-		kernel::lib::LockGuard<kernel::lib::SpinLock> guard(heap_lock);
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(heap_lock);
 
 		const size_t ci = class_index_for(size);
 		if (ci < class_count)
@@ -299,7 +299,7 @@ namespace kernel::mm::heap
 			return;
 		}
 
-		kernel::lib::LockGuard<kernel::lib::SpinLock> guard(heap_lock);
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(heap_lock);
 
 		if (is_slab_ptr(ptr))
 		{

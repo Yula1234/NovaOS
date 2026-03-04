@@ -7,6 +7,7 @@
 #include "kernel/log/log.hpp"
 #include "kernel/mm/physmap.hpp"
 #include "kernel/mm/pmm.hpp"
+#include "lib/lock.hpp"
 
 namespace
 {
@@ -214,6 +215,7 @@ namespace
 	}
 
 	kernel::mm::vmm::AddressSpace kernel_as;
+	kernel::lib::SpinLock vmm_lock;
 }
 
 namespace kernel::mm::vmm
@@ -235,6 +237,8 @@ namespace kernel::mm::vmm
 
 	bool AddressSpace::map_page(uint64_t virt, uint64_t phys, PageFlags flags) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vmm_lock);
+
 		if ((virt % page_size) != 0 || (phys % page_size) != 0)
 		{
 			return false;
@@ -274,6 +278,8 @@ namespace kernel::mm::vmm
 
 	bool AddressSpace::unmap_page(uint64_t virt) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vmm_lock);
+
 		if ((virt % page_size) != 0)
 		{
 			return false;
@@ -356,7 +362,10 @@ namespace kernel::mm::vmm
 
 	uint64_t AddressSpace::translate(uint64_t virt) const noexcept
 	{
-		const uint64_t offset = virt & 0xFFF;
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vmm_lock);
+
+		const uint64_t offset = virt & (page_size - 1);
+
 		const uint64_t pml4_i = pml4_index(virt);
 		const uint64_t pdpt_i = pdpt_index(virt);
 		const uint64_t pd_i = pd_index(virt);

@@ -1,5 +1,7 @@
 #include "kernel/console/vga.hpp"
 
+#include "lib/lock.hpp"
+
 namespace
 {
 	constexpr uintptr_t vga_phys = 0xB8000;
@@ -11,6 +13,8 @@ namespace
 
 	size_t cursor_col = 0;
 	size_t cursor_row = 0;
+
+	kernel::lib::SpinLock vga_lock;
 
 	uint16_t make_cell(char c, uint8_t attr) noexcept
 	{
@@ -67,6 +71,8 @@ namespace kernel::console::vga
 {
 	void clear() noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vga_lock);
+
 		for (size_t r = 0; r < rows; ++r)
 		{
 			for (size_t c = 0; c < cols; ++c)
@@ -81,6 +87,8 @@ namespace kernel::console::vga
 
 	void write(const char* s) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vga_lock);
+
 		if (!s)
 		{
 			return;
@@ -94,6 +102,8 @@ namespace kernel::console::vga
 
 	void write(const char* s, size_t len) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(vga_lock);
+
 		if (!s)
 		{
 			return;

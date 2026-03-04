@@ -3,10 +3,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "lib/align.hpp"
-#include "lib/bit.hpp"
+#include "kernel/arch/x86_64/cpu.hpp"
 #include "kernel/log/log.hpp"
 #include "kernel/mm/physmap.hpp"
+#include "lib/align.hpp"
+#include "lib/bit.hpp"
+#include "lib/lock.hpp"
 
 extern "C" uint8_t __kernel_phys_start;
 extern "C" uint8_t __kernel_phys_end;
@@ -22,6 +24,7 @@ namespace
 
 	uint64_t free_pages = 0;
 	uint64_t alloc_limit_bytes = early_mapped_limit;
+	kernel::lib::SpinLock pmm_lock;
 
 	void bitmap_set(uint64_t page_index) noexcept
 	{
@@ -253,6 +256,8 @@ namespace kernel::mm::pmm
 {
 	void init(const kernel::boot::multiboot2::Reader& multiboot) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(pmm_lock);
+
 		const uint64_t max_addr = find_max_address(multiboot);
 		page_count = kernel::lib::align_up(max_addr, page_size) / page_size;
 
@@ -331,6 +336,8 @@ namespace kernel::mm::pmm
 
 	Stats stats() noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(pmm_lock);
+
 		return Stats{
 			.total_pages = page_count,
 			.free_pages = free_pages,
@@ -340,16 +347,20 @@ namespace kernel::mm::pmm
 
 	uint64_t alloc_limit() noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(pmm_lock);
 		return alloc_limit_bytes;
 	}
 
 	void set_alloc_limit(uint64_t limit_bytes) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(pmm_lock);
 		alloc_limit_bytes = limit_bytes;
 	}
 
 	uint64_t alloc_page() noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(pmm_lock);
+
 		const uint64_t limit_pages = alloc_limit_bytes / page_size;
 		const uint64_t search_pages = limit_pages < page_count ? limit_pages : page_count;
 
@@ -372,6 +383,8 @@ namespace kernel::mm::pmm
 
 	uint64_t alloc_page_at(uint64_t phys_addr) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(pmm_lock);
+
 		if ((phys_addr % page_size) != 0)
 		{
 			return 0;
@@ -404,6 +417,8 @@ namespace kernel::mm::pmm
 
 	void free_page(uint64_t phys_addr) noexcept
 	{
+		kernel::lib::IrqLockGuard<kernel::lib::SpinLock> guard(pmm_lock);
+
 		if ((phys_addr % page_size) != 0)
 		{
 			return;
