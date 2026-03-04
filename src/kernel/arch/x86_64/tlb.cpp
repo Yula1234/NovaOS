@@ -5,13 +5,12 @@
 #include "kernel/arch/x86_64/apic/lapic.hpp"
 #include "kernel/arch/x86_64/cpu.hpp"
 #include "kernel/arch/x86_64/smp.hpp"
-#include "lib/lock.hpp"
 
 namespace
 {
 	constexpr uint64_t cr3_mask = 0x000FFFFFFFFFF000ull;
 
-	kernel::lib::McsLock shoot_lock;
+	std::atomic<uint8_t> shoot_inflight{0};
 
 	std::atomic<uint64_t> shoot_seq{0};
 	std::atomic<uint32_t> shoot_acks{0};
@@ -20,6 +19,21 @@ namespace
 	std::atomic<uint64_t> shoot_virt{0};
 
 	uint64_t last_handled_seq[256]{};
+
+	void enter_shootdown() noexcept
+	{
+		uint8_t expected = 0;
+		while (!shoot_inflight.compare_exchange_weak(expected, static_cast<uint8_t>(1), std::memory_order_acquire, std::memory_order_relaxed))
+		{
+			expected = 0;
+			asm volatile("pause");
+		}
+	}
+
+	void exit_shootdown() noexcept
+	{
+		shoot_inflight.store(0, std::memory_order_release);
+	}
 
 	uint32_t cpu_expected_acks() noexcept
 	{
@@ -85,7 +99,7 @@ namespace kernel::arch::x86_64::tlb
 			return;
 		}
 
-		kernel::lib::IrqMcsLockGuard guard(shoot_lock);
+		enter_shootdown();
 
 		shoot_target_cr3.store(target_cr3_phys & cr3_mask, std::memory_order_relaxed);
 		shoot_virt.store(virt, std::memory_order_relaxed);
@@ -100,5 +114,7 @@ namespace kernel::arch::x86_64::tlb
 		{
 			asm volatile("pause");
 		}
+
+		exit_shootdown();
 	}
 }
