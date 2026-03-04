@@ -258,7 +258,7 @@ namespace
 	constexpr uint32_t max_apic_id = 256;
 	constexpr uint32_t per_cpu_obj_capacity = 32;
 
-	struct PerCpuClassCache
+	struct alignas(64) PerCpuClassCache
 	{
 		uint32_t count{0};
 		void* objects[per_cpu_obj_capacity];

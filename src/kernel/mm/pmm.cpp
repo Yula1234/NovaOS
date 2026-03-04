@@ -46,7 +46,7 @@ namespace
 
 	Zone zones[zone_count]{};
 
-	struct PerCpuCache
+	struct alignas(64) PerCpuCache
 	{
 		std::atomic<uint32_t> count{0};
 		uint64_t pages[pcp_capacity];
