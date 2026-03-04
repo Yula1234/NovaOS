@@ -71,6 +71,7 @@ namespace
 
 	[[gnu::interrupt]] void isr_default(kernel::arch::x86_64::InterruptFrame* frame) noexcept
 	{
+		asm volatile("cld" ::: "cc");
 		kernel::log::write_line("exception");
 		write_frame("frame", frame);
 		hang();
@@ -78,6 +79,7 @@ namespace
 
 	[[gnu::interrupt]] void isr_gpf(kernel::arch::x86_64::InterruptFrame* frame, uint64_t error_code) noexcept
 	{
+		asm volatile("cld" ::: "cc");
 		kernel::log::write_line("#GP");
 		write_frame("frame", frame);
 		write_error_code(error_code);
@@ -86,6 +88,7 @@ namespace
 
 	[[gnu::interrupt]] void isr_page_fault(kernel::arch::x86_64::InterruptFrame* frame, uint64_t error_code) noexcept
 	{
+		asm volatile("cld" ::: "cc");
 		kernel::log::write_line("#PF");
 		write_frame("frame", frame);
 		kernel::log::write(" cr2=");
@@ -95,22 +98,22 @@ namespace
 		hang();
 	}
 
-	[[gnu::interrupt]] void isr_irq0(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(0, frame); }
-	[[gnu::interrupt]] void isr_irq1(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(1, frame); }
-	[[gnu::interrupt]] void isr_irq2(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(2, frame); }
-	[[gnu::interrupt]] void isr_irq3(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(3, frame); }
-	[[gnu::interrupt]] void isr_irq4(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(4, frame); }
-	[[gnu::interrupt]] void isr_irq5(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(5, frame); }
-	[[gnu::interrupt]] void isr_irq6(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(6, frame); }
-	[[gnu::interrupt]] void isr_irq7(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(7, frame); }
-	[[gnu::interrupt]] void isr_irq8(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(8, frame); }
-	[[gnu::interrupt]] void isr_irq9(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(9, frame); }
-	[[gnu::interrupt]] void isr_irq10(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(10, frame); }
-	[[gnu::interrupt]] void isr_irq11(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(11, frame); }
-	[[gnu::interrupt]] void isr_irq12(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(12, frame); }
-	[[gnu::interrupt]] void isr_irq13(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(13, frame); }
-	[[gnu::interrupt]] void isr_irq14(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(14, frame); }
-	[[gnu::interrupt]] void isr_irq15(kernel::arch::x86_64::InterruptFrame* frame) noexcept { kernel::arch::x86_64::irq::dispatch(15, frame); }
+	[[gnu::interrupt]] void isr_irq0(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(0, frame); }
+	[[gnu::interrupt]] void isr_irq1(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(1, frame); }
+	[[gnu::interrupt]] void isr_irq2(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(2, frame); }
+	[[gnu::interrupt]] void isr_irq3(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(3, frame); }
+	[[gnu::interrupt]] void isr_irq4(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(4, frame); }
+	[[gnu::interrupt]] void isr_irq5(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(5, frame); }
+	[[gnu::interrupt]] void isr_irq6(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(6, frame); }
+	[[gnu::interrupt]] void isr_irq7(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(7, frame); }
+	[[gnu::interrupt]] void isr_irq8(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(8, frame); }
+	[[gnu::interrupt]] void isr_irq9(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(9, frame); }
+	[[gnu::interrupt]] void isr_irq10(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(10, frame); }
+	[[gnu::interrupt]] void isr_irq11(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(11, frame); }
+	[[gnu::interrupt]] void isr_irq12(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(12, frame); }
+	[[gnu::interrupt]] void isr_irq13(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(13, frame); }
+	[[gnu::interrupt]] void isr_irq14(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(14, frame); }
+	[[gnu::interrupt]] void isr_irq15(kernel::arch::x86_64::InterruptFrame* frame) noexcept { asm volatile("cld" ::: "cc"); kernel::arch::x86_64::irq::dispatch(15, frame); }
 
 	void set_isr(uint8_t vector, void (*handler)()) noexcept
 	{

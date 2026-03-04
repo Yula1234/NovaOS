@@ -47,17 +47,24 @@ extern "C"
 			return dst;
 		}
 
-		auto* d_end = d + n - 1;
-		auto* s_end = s + n - 1;
+		auto* d_end = d + n;
+		auto* s_end = s + n;
 
-		asm volatile(
-			"std\n"
-			"rep movsb\n"
-			"cld\n"
-			: "+D"(d_end), "+S"(s_end), "+c"(n)
-			:
-			: "memory"
-		);
+		while (n >= 8)
+		{
+			d_end -= 8;
+			s_end -= 8;
+			*reinterpret_cast<uint64_t*>(d_end) = *reinterpret_cast<const uint64_t*>(s_end);
+			n -= 8;
+		}
+
+		while (n != 0)
+		{
+			--d_end;
+			--s_end;
+			*d_end = *s_end;
+			--n;
+		}
 
 		return dst;
 	}

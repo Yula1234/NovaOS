@@ -51,6 +51,7 @@ namespace
 
 	[[gnu::interrupt]] void isr_timer(kernel::arch::x86_64::InterruptFrame*) noexcept
 	{
+		asm volatile("cld" ::: "cc");
 		if (timer_handler)
 		{
 			timer_handler();
@@ -62,6 +63,7 @@ namespace
 
 	[[gnu::interrupt]] void isr_ipi(kernel::arch::x86_64::InterruptFrame*) noexcept
 	{
+		asm volatile("cld" ::: "cc");
 		if (ipi_handler)
 		{
 			ipi_handler();
