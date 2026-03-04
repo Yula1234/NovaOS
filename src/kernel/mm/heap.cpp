@@ -66,7 +66,192 @@ namespace
 		kernel::lib::McsLock lock;
 	};
 
-	uint64_t next_heap_virt = heap_base;
+	constexpr uint32_t heap_pages = static_cast<uint32_t>((heap_limit - heap_base) / page_size);
+	constexpr uint32_t heap_null_index = ~0u;
+
+	uint8_t heap_free_order[heap_pages]{};
+	uint32_t heap_prev[heap_pages]{};
+	uint32_t heap_next[heap_pages]{};
+	uint32_t heap_free_list_head[32]{};
+	uint32_t heap_max_order = 0;
+
+	uint32_t heap_compute_max_order(uint32_t pages) noexcept
+	{
+		uint32_t order = 0;
+		while ((1u << (order + 1)) != 0 && (1u << (order + 1)) <= pages)
+		{
+			++order;
+		}
+		return order;
+	}
+
+	void heap_list_init() noexcept
+	{
+		for (uint32_t i = 0; i < 32; ++i)
+		{
+			heap_free_list_head[i] = heap_null_index;
+		}
+	}
+
+	void heap_list_push(uint32_t order, uint32_t page_index) noexcept
+	{
+		heap_prev[page_index] = heap_null_index;
+		heap_next[page_index] = heap_free_list_head[order];
+
+		if (heap_free_list_head[order] != heap_null_index)
+		{
+			heap_prev[heap_free_list_head[order]] = page_index;
+		}
+
+		heap_free_list_head[order] = page_index;
+	}
+
+	void heap_list_remove(uint32_t order, uint32_t page_index) noexcept
+	{
+		const uint32_t prev = heap_prev[page_index];
+		const uint32_t next = heap_next[page_index];
+
+		if (prev != heap_null_index)
+		{
+			heap_next[prev] = next;
+		}
+		else
+		{
+			heap_free_list_head[order] = next;
+		}
+
+		if (next != heap_null_index)
+		{
+			heap_prev[next] = prev;
+		}
+
+		heap_prev[page_index] = heap_null_index;
+		heap_next[page_index] = heap_null_index;
+	}
+
+	uint32_t heap_list_pop(uint32_t order) noexcept
+	{
+		const uint32_t head = heap_free_list_head[order];
+		if (head == heap_null_index)
+		{
+			return heap_null_index;
+		}
+
+		heap_list_remove(order, head);
+		return head;
+	}
+
+	void heap_add_free_block(uint32_t page_index, uint32_t order) noexcept
+	{
+		heap_free_order[page_index] = static_cast<uint8_t>(order);
+		heap_list_push(order, page_index);
+	}
+
+	uint32_t heap_alloc_block(uint32_t order) noexcept
+	{
+		for (uint32_t o = order; o <= heap_max_order; ++o)
+		{
+			const uint32_t block = heap_list_pop(o);
+			if (block == heap_null_index)
+			{
+				continue;
+			}
+
+			heap_free_order[block] = 0xFF;
+
+			uint32_t current = block;
+			uint32_t current_order = o;
+			while (current_order > order)
+			{
+				--current_order;
+				const uint32_t split = current + (1u << current_order);
+				heap_add_free_block(split, current_order);
+			}
+
+			return current;
+		}
+
+		return heap_null_index;
+	}
+
+	void heap_free_block(uint32_t page_index, uint32_t order) noexcept
+	{
+		uint32_t current = page_index;
+		uint32_t current_order = order;
+
+		while (current_order < heap_max_order)
+		{
+			const uint32_t buddy = current ^ (1u << current_order);
+			if (buddy >= heap_pages)
+			{
+				break;
+			}
+
+			if (heap_free_order[buddy] != current_order)
+			{
+				break;
+			}
+
+			heap_list_remove(current_order, buddy);
+			heap_free_order[buddy] = 0xFF;
+
+			current = buddy < current ? buddy : current;
+			++current_order;
+		}
+
+		heap_add_free_block(current, current_order);
+	}
+
+	uint64_t heap_alloc_virt(uint32_t pages) noexcept
+	{
+		uint32_t order = 0;
+		while ((1u << order) < pages)
+		{
+			++order;
+		}
+
+		if (order > heap_max_order)
+		{
+			return 0;
+		}
+
+		const uint32_t block = heap_alloc_block(order);
+		if (block == heap_null_index)
+		{
+			return 0;
+		}
+
+		return heap_base + static_cast<uint64_t>(block) * page_size;
+	}
+
+	void heap_free_virt(uint64_t base, uint32_t pages) noexcept
+	{
+		if (base < heap_base || base >= heap_limit)
+		{
+			return;
+		}
+
+		const uint64_t offset = base - heap_base;
+		if ((offset % page_size) != 0)
+		{
+			return;
+		}
+
+		uint32_t order = 0;
+		while ((1u << order) < pages)
+		{
+			++order;
+		}
+
+		const uint32_t index = static_cast<uint32_t>(offset / page_size);
+		if (index >= heap_pages)
+		{
+			return;
+		}
+
+		heap_free_block(index, order);
+	}
+
 	ClassList classes[class_count] = {};
 	kernel::lib::McsLock heap_virt_lock;
 
@@ -180,10 +365,8 @@ namespace
 	{
 		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock);
 
-		const uint64_t total = static_cast<uint64_t>(pages) * page_size;
-		const uint64_t base = kernel::lib::align_up(next_heap_virt, page_size);
-
-		if (base + total > heap_limit)
+		const uint64_t base = heap_alloc_virt(pages);
+		if (base == 0)
 		{
 			return 0;
 		}
@@ -193,11 +376,23 @@ namespace
 			const uint64_t v = base + static_cast<uint64_t>(i) * page_size;
 			if (!map_fresh_page(v))
 			{
+				for (uint32_t j = 0; j < i; ++j)
+				{
+					const uint64_t rollback_v = base + static_cast<uint64_t>(j) * page_size;
+					const uint64_t phys = kernel::mm::vmm::kernel_space().translate(rollback_v);
+					kernel::mm::vmm::kernel_space().unmap_page(rollback_v);
+
+					if (phys != 0)
+					{
+						kernel::mm::pmm::free_page(phys);
+					}
+				}
+
+				heap_free_virt(base, pages);
 				return 0;
 			}
 		}
 
-		next_heap_virt = base + total;
 		return base;
 	}
 
@@ -629,6 +824,11 @@ namespace
 				kernel::mm::pmm::free_page(phys);
 			}
 		}
+
+		{
+			kernel::lib::IrqMcsLockGuard guard(heap_virt_lock);
+			heap_free_virt(page, pages);
+		}
 	}
 
 	bool is_slab_ptr(const void* ptr) noexcept
@@ -653,7 +853,17 @@ namespace kernel::mm::heap
 	void init() noexcept
 	{
 		kernel::lib::IrqMcsLockGuard guard(heap_virt_lock);
-		next_heap_virt = heap_base;
+
+		heap_list_init();
+		heap_max_order = heap_compute_max_order(heap_pages);
+		for (uint32_t i = 0; i < heap_pages; ++i)
+		{
+			heap_free_order[i] = 0xFF;
+			heap_prev[i] = heap_null_index;
+			heap_next[i] = heap_null_index;
+		}
+
+		heap_add_free_block(0, heap_max_order);
 
 		for (size_t i = 0; i < class_count; ++i)
 		{
@@ -674,6 +884,8 @@ namespace kernel::mm::heap
 		kernel::log::write_u64_hex(heap_base);
 		kernel::log::write(" limit=");
 		kernel::log::write_u64_hex(heap_limit);
+		kernel::log::write(" pages=");
+		kernel::log::write_u64_dec(heap_pages);
 		kernel::log::write("\n", 1);
 	}
 
