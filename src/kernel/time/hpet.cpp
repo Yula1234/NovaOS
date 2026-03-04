@@ -16,7 +16,28 @@ namespace
 
 	volatile uint64_t* regs = nullptr;
 	uint64_t period_fs = 0;
+	uint64_t ns_mul_q32 = 0;
 	bool inited = false;
+
+	constexpr uint64_t q32_shift = 32;
+
+	void mul_u64_u64_128(uint64_t a, uint64_t b, uint64_t& lo, uint64_t& hi) noexcept
+	{
+		asm volatile(
+			"mulq %[b]"
+			: "=a"(lo), "=d"(hi)
+			: "a"(a), [b] "r"(b)
+			: "cc"
+		);
+	}
+
+	uint64_t mul_shift_right_32(uint64_t a, uint64_t b) noexcept
+	{
+		uint64_t lo = 0;
+		uint64_t hi = 0;
+		mul_u64_u64_128(a, b, lo, hi);
+		return (hi << (64 - q32_shift)) | (lo >> q32_shift);
+	}
 
 	uint64_t div_u128_u32(uint64_t hi, uint64_t lo, uint32_t d) noexcept
 	{
@@ -83,6 +104,12 @@ namespace kernel::time::hpet
 			return false;
 		}
 
+		constexpr uint32_t fs_per_ns = 1000000u;
+		const __uint128_t numer = static_cast<__uint128_t>(period_fs) << q32_shift;
+		const uint64_t hi = static_cast<uint64_t>(numer >> 64);
+		const uint64_t lo = static_cast<uint64_t>(numer);
+		ns_mul_q32 = div_u128_u32(hi, lo, fs_per_ns);
+
 		const uint64_t cfg = read64(reg_gc_cfg);
 		write64(reg_gc_cfg, cfg & ~cfg_enable);
 		write64(reg_main_counter, 0);
@@ -92,6 +119,8 @@ namespace kernel::time::hpet
 
 		kernel::log::write("hpet period_fs=");
 		kernel::log::write_u64_dec(period_fs);
+		kernel::log::write(" ns_mul_q32=");
+		kernel::log::write_u64_hex(ns_mul_q32);
 		kernel::log::write("\n", 1);
 
 		return true;
@@ -109,13 +138,7 @@ namespace kernel::time::hpet
 			return 0;
 		}
 
-		constexpr uint32_t fs_per_ns = 1000000u;
-
-		const __uint128_t prod = static_cast<__uint128_t>(counter()) * static_cast<__uint128_t>(period_fs);
-		const uint64_t hi = static_cast<uint64_t>(prod >> 64);
-		const uint64_t lo = static_cast<uint64_t>(prod);
-
-		return div_u128_u32(hi, lo, fs_per_ns);
+		return mul_shift_right_32(counter(), ns_mul_q32);
 	}
 
 	void busy_wait_ns(uint64_t ns) noexcept
