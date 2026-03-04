@@ -403,8 +403,7 @@ namespace
 
 	uint64_t slab_header_addr(uint64_t page_virt) noexcept
 	{
-		const uint64_t raw = page_virt + page_size - sizeof(SlabHeader);
-		return kernel::lib::align_down(raw, cacheline_size);
+		return page_virt;
 	}
 
 	SlabHeader* slab_from_page(uint64_t page_virt) noexcept
@@ -503,8 +502,8 @@ namespace
 		h->next_slab = 0;
 		h->prev_slab = 0;
 
-		const uint64_t data_start = kernel::lib::align_up(page, cacheline_size);
-		const uint64_t data_end = slab_header_addr(page);
+		const uint64_t data_start = kernel::lib::align_up(page + sizeof(SlabHeader), cacheline_size);
+		const uint64_t data_end = page + page_size;
 		const uint64_t obj_size = h->object_size;
 
 		uint64_t cursor = data_start;
