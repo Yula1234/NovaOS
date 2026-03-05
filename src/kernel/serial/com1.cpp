@@ -9,6 +9,7 @@ namespace kernel::serial
 
 	bool Com1::init() noexcept
 	{
+		/* 16550 init: disable interrupts, set DLAB, program divisor, 8N1, enable FIFO, enable OUT2. */
 		outb(base_port + 1, 0x00);
 		outb(base_port + 3, 0x80);
 		outb(base_port + 0, 0x03);
@@ -17,6 +18,7 @@ namespace kernel::serial
 		outb(base_port + 2, 0xC7);
 		outb(base_port + 4, 0x0B);
 
+		/* Loopback sanity check; helps catch missing UART or misdecoded ports. */
 		const uint8_t test_value = 0xAE;
 		outb(base_port + 0, test_value);
 
@@ -25,6 +27,7 @@ namespace kernel::serial
 
 	bool Com1::is_transmit_empty() const noexcept
 	{
+		/* LSR bit 5 = THR empty. */
 		return (inb(base_port + 5) & 0x20) != 0;
 	}
 
@@ -49,6 +52,7 @@ namespace kernel::serial
 			const char c = *p;
 			if (c == '\n')
 			{
+				/* Many serial terminals expect CRLF. */
 				write_byte('\r');
 			}
 

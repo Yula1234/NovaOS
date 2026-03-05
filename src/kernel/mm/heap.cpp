@@ -17,13 +17,21 @@ namespace
 {
 	constexpr uint64_t page_size = 4096;
 
+	/* Dedicated kernel heap VA window; only the heap allocator should touch it. */
 	constexpr uint64_t heap_base = 0xFFFFFE0000000000ull;
 	constexpr uint64_t heap_limit = heap_base + (1ull << 30);
+	/* Keep alignas(64) objects naturally aligned even when they come from slabs. */
 	constexpr uint64_t cacheline_size = 64;
 
+	/* Headers are in-band; magic values make it cheap to detect double-free/corruption. */
 	constexpr uint32_t slab_magic = 0x534C4142u;
 	constexpr uint32_t large_magic = 0x4C415247u;
+	/* A wrong magic is your early warning before a bad free turns into "why the fuck is this pointer here". */
 
+	/*
+	 * Size classes are intentionally small; bigger allocations go through vmalloc.
+	 * If you try to stuff a sofa into the slab allocator, you'll only get splinters.
+	 */
 	constexpr size_t class_count = 8;
 	constexpr size_t size_classes[class_count] = { 16, 32, 64, 128, 256, 512, 1024, 2048 };
 
@@ -36,6 +44,7 @@ namespace
 
 	struct [[gnu::packed]] SlabHeader
 	{
+		/* SlabHeader lives at the start of a slab page; the rest is objects + freelist. */
 		uint32_t magic;
 		uint16_t object_size;
 		uint8_t list_kind;
@@ -49,6 +58,8 @@ namespace
 
 	struct [[gnu::packed]] LargeHeader
 	{
+		/* Large allocations are page-backed; header is placed at the base of the mapping. */
+		/* The magic is not for style points; it keeps bad frees from turning into silent memory art. */
 		uint32_t magic;
 		uint32_t pages;
 		uint64_t size_bytes;

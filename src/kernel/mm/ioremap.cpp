@@ -25,10 +25,12 @@ namespace kernel::mm::ioremap
 			return nullptr;
 		}
 
+		/* Align down to a page and return a pointer with the original byte offset restored. */
 		const uint64_t phys_page = kernel::lib::align_down(phys, page_size);
 		const uint64_t off = phys - phys_page;
 
 		const uint64_t total = kernel::lib::align_up(static_cast<uint64_t>(size) + off, page_size);
+		/* VMAR hands us a unique virtual range; VMM then wires it to the requested phys pages. */
 		auto* base_ptr = kernel::mm::vmar::ioremap_alloc(total, page_size);
 		if (!base_ptr)
 		{
@@ -37,6 +39,7 @@ namespace kernel::mm::ioremap
 		}
 		const uint64_t base = reinterpret_cast<uint64_t>(base_ptr);
 
+		/* MMIO mappings are typically uncached and never executable. */
 		const auto flags = kernel::mm::vmm::PageFlags::Writable |
 			kernel::mm::vmm::PageFlags::NoExecute |
 			kernel::mm::vmm::PageFlags::CacheDisable;

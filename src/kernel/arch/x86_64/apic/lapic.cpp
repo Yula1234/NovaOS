@@ -6,6 +6,7 @@
 
 namespace
 {
+	/* LAPIC MMIO register offsets; spec defines them as 32-bit registers on 16-byte boundaries. */
 	constexpr uint32_t reg_id = 0x20;
 	constexpr uint32_t reg_eoi = 0xB0;
 	constexpr uint32_t reg_svr = 0xF0;
@@ -19,6 +20,7 @@ namespace
 
 	constexpr uint32_t svr_enable = 1u << 8;
 
+	/* ICR delivery modes we use here; shorthand/destination bits are set by the call sites. */
 	constexpr uint32_t icr_delivery_init = 0b101u << 8;
 	constexpr uint32_t icr_delivery_startup = 0b110u << 8;
 	constexpr uint32_t icr_delivery_nmi = 0b100u << 8;
@@ -44,6 +46,7 @@ namespace
 
 	inline void clear_esr() noexcept
 	{
+		/* The ESR is latchy; the common sequence is two zero-writes followed by a readback. */
 		write_reg(reg_esr, 0);
 		write_reg(reg_esr, 0);
 		(void)read_reg(reg_esr);
@@ -77,6 +80,7 @@ namespace
 		write_reg(reg_icr_high, high);
 		write_reg(reg_icr_low, low);
 
+		/* Delivery is serialized in hardware; wait for the "send pending" bit to drop. */
 		while ((read_reg(reg_icr_low) & (1u << 12)) != 0)
 		{
 			asm volatile("pause");
@@ -89,6 +93,7 @@ namespace
 		constexpr uint64_t apic_enable = 1ull << 11;
 		constexpr uint64_t x2apic_enable = 1ull << 10;
 
+		/* Force xAPIC mode here (MMIO registers); x2APIC would switch access to MSRs. */
 		const uint64_t base = kernel::arch::x86_64::rdmsr(ia32_apic_base);
 		kernel::arch::x86_64::wrmsr(
 			ia32_apic_base,
@@ -98,6 +103,7 @@ namespace
 
 	inline void enable_spurious_vector() noexcept
 	{
+		/* SVR[8]=enable and the low byte is the spurious vector; keep it at 0xFF. */
 		const uint32_t svr = read_reg(reg_svr);
 		write_reg(reg_svr, (svr & 0xFFFFFF00u) | svr_enable | 0xFFu);
 	}

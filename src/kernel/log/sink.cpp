@@ -10,6 +10,7 @@ namespace kernel::log
 
 	void MultiSink::write(const char* s, size_t len) noexcept
 	{
+		/* Preserve write order: first_ then second_. */
 		if (first_)
 		{
 			first_->write(s, len);

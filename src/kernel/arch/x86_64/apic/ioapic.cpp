@@ -5,6 +5,7 @@
 
 namespace
 {
+	/* IOAPIC registers are accessed via an index/data window pair (REGSEL/REGWIN). */
 	constexpr uint32_t reg_sel = 0x00;
 	constexpr uint32_t reg_win = 0x10;
 
@@ -36,8 +37,10 @@ namespace
 
 	uint64_t make_redir(uint8_t vector, uint32_t dest_apic_id, uint16_t flags) noexcept
 	{
+		/* We only emit a fixed delivery redirection entry; masks and other modes can be added later. */
 		uint64_t value = vector;
 
+		/* ACPI MADT ISO flags: bit1=active low, bit3=level triggered (ACPI spec encoding). */
 		const bool active_low = (flags & (1u << 1)) != 0;
 		const bool level = (flags & (1u << 3)) != 0;
 
@@ -57,6 +60,7 @@ namespace
 
 	void write_redir(uint32_t index, uint64_t value) noexcept
 	{
+		/* Redirection table is split into two 32-bit registers (high then low is a common order). */
 		const uint8_t low = static_cast<uint8_t>(redtbl_base + index * 2);
 		const uint8_t high = static_cast<uint8_t>(redtbl_base + index * 2 + 1);
 

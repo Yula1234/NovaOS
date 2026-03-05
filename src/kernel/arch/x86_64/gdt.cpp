@@ -4,12 +4,14 @@
 
 namespace
 {
+	/* GDTR is a raw operand for LGDT; same format as IDTR. */
 	struct [[gnu::packed]] Gdtr
 	{
 		uint16_t limit;
 		uint64_t base;
 	};
 
+	/* 64-bit TSS layout used by the CPU on privilege transitions and IST stack switching. */
 	struct [[gnu::packed]] Tss64
 	{
 		uint32_t reserved0;
@@ -33,6 +35,7 @@ namespace
 
 	constexpr size_t max_cpus = 256;
 	constexpr size_t gdt_entries = 7;
+	/* IST stacks are per-CPU and intentionally small; they are only for the first-level trap prologue. */
 	constexpr size_t ist_stack_size = 4096;
 
 	alignas(16) uint64_t gdt_table[max_cpus][gdt_entries]{};
@@ -61,6 +64,7 @@ namespace
 
 	void set_tss_descriptor(uint64_t* gdt, uint16_t selector, uint64_t base, uint32_t limit) noexcept
 	{
+		/* TSS descriptor consumes two consecutive GDT entries in 64-bit mode. */
 		const uint16_t index = static_cast<uint16_t>(selector >> 3);
 		const uint64_t type = 0x9ull;
 		const uint64_t present = 1ull;
@@ -86,6 +90,7 @@ namespace
 	{
 		asm volatile("lgdt %0" : : "m"(gdtr) : "memory");
 
+		/* Reload CS via far control transfer; ordinary mov can't touch CS. */
 		asm volatile(
 			"pushq %[cs]\n"
 			"lea 1f(%%rip), %%rax\n"

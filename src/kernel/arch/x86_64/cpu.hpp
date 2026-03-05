@@ -4,6 +4,7 @@
 
 namespace kernel::arch::x86_64
 {
+	/* IDTR is a raw hardware operand for LIDT; the layout is fixed by the ISA. */
 	struct [[gnu::packed]] Idtr
 	{
 		uint16_t limit;
@@ -27,6 +28,7 @@ namespace kernel::arch::x86_64
 
 	inline bool interrupts_enabled() noexcept
 	{
+		/* IF is RFLAGS bit 9. Reading RFLAGS this way avoids relying on compiler intrinsics. */
 		uint64_t rflags;
 		asm volatile(
 			"pushfq\n"
@@ -72,6 +74,7 @@ namespace kernel::arch::x86_64
 
 	inline uint64_t rdtsc() noexcept
 	{
+		/* lfence serializes prior loads; good enough for monotonic-ish timestamping here. */
 		uint32_t lo = 0;
 		uint32_t hi = 0;
 		asm volatile(
@@ -87,6 +90,7 @@ namespace kernel::arch::x86_64
 
 	inline void cpuid(uint32_t leaf, uint32_t subleaf, uint32_t& eax, uint32_t& ebx, uint32_t& ecx, uint32_t& edx) noexcept
 	{
+		/* subleaf is passed in ECX as required by CPUID; some leaves ignore it. */
 		asm volatile(
 			"cpuid"
 			: "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
@@ -96,6 +100,7 @@ namespace kernel::arch::x86_64
 
 	inline uint64_t rdmsr(uint32_t msr) noexcept
 	{
+		/* Caller must ensure MSR exists on this CPU; RDMSR faults are not recoverable here. */
 		uint32_t lo;
 		uint32_t hi;
 		asm volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));

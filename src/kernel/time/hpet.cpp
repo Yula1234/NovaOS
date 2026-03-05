@@ -8,12 +8,14 @@
 
 namespace
 {
+	/* HPET register block offsets. */
 	constexpr uint64_t reg_gc_id = 0x000;
 	constexpr uint64_t reg_gc_cfg = 0x010;
 	constexpr uint64_t reg_main_counter = 0x0F0;
 
 	constexpr uint64_t cfg_enable = 1ull << 0;
 
+	/* MMIO register window. */
 	volatile uint64_t* regs = nullptr;
 	uint64_t period_fs = 0;
 	uint64_t ns_mul_q32 = 0;
@@ -97,6 +99,7 @@ namespace kernel::time::hpet
 		regs = static_cast<volatile uint64_t*>(kernel::mm::ioremap::map(hpet_phys, 0x1000));
 
 		const uint64_t id = read64(reg_gc_id);
+		/* Period is reported in femtoseconds per tick in the upper dword of GC_ID. */
 		period_fs = (id >> 32) & 0xFFFFFFFFull;
 		if (period_fs == 0)
 		{
@@ -108,6 +111,7 @@ namespace kernel::time::hpet
 		const __uint128_t numer = static_cast<__uint128_t>(period_fs) << q32_shift;
 		const uint64_t hi = static_cast<uint64_t>(numer >> 64);
 		const uint64_t lo = static_cast<uint64_t>(numer);
+		/* Precompute (period_fs / 1e6) in Q32 fixed-point so counter->ns is a single mul+shift. */
 		ns_mul_q32 = div_u128_u32(hi, lo, fs_per_ns);
 
 		const uint64_t cfg = read64(reg_gc_cfg);

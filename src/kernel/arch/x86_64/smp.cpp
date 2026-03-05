@@ -33,6 +33,10 @@ namespace
 	constexpr uint64_t ap_lowmem_limit = 0x100000ull;
 	constexpr uint64_t page_size = 4096;
 
+	/*
+	 * Shared mailbox between BSP and the AP trampoline.
+	 * It lives inside the trampoline page and is addressed via physical memory during early AP bring-up.
+	 */
 	struct alignas(8) TrampolineMailbox
 	{
 		uint64_t cr3;
@@ -65,8 +69,13 @@ namespace
 
 	bool setup_trampoline_image() noexcept
 	{
+		/* SIPI targets a 4KiB physical page below 1MiB. Temporarily clamp PMM allocations there. */
 		const uint64_t saved_limit = kernel::mm::pmm::alloc_limit();
 		kernel::mm::pmm::set_alloc_limit(ap_lowmem_limit);
+		/*
+		 * A few conventional low-memory slots. Some firmware leaves holes, so we probe a small list first.
+		 * If it doesn't work, fall back to any lowmem page.
+		 */
 		constexpr uint64_t preferred_addrs[] = {
 			0x7000,
 			0x8000,
@@ -138,6 +147,10 @@ namespace
 			desc[7] = static_cast<uint8_t>(seg_base >> 24);
 		}
 
+		/*
+		 * The AP executes with paging enabled (we load CR3 in the trampoline). To keep the trampoline
+		 * simple we require an identity mapping for the trampoline page.
+		 */
 		auto& kas = kernel::mm::vmm::kernel_space();
 		const uint64_t already = kas.translate(trampoline_phys);
 		if (already != trampoline_phys)
@@ -194,8 +207,14 @@ namespace
 			mailbox->stage = 104;
 		}
 
+		/* Exposed for diagnostics; useful when debugging AP hangs in early stages. */
 		::smp_ap_mailbox_ptrs[apic_id] = reinterpret_cast<uint64_t>(mailbox);
 
+		/*
+		 * Two-phase AP start:
+		 *  - AP sets *ready_ptr when it reached long mode and is about to jump into ap_main.
+		 *  - AP waits for *go_ptr so BSP can finish global init before AP enables interrupts.
+		 */
 		const auto go = reinterpret_cast<std::atomic<uint32_t>*>(mailbox ? mailbox->go_ptr : 0);
 		while (go && go->load(std::memory_order_acquire) == 0)
 		{
@@ -238,6 +257,7 @@ namespace
 			return false;
 		}
 
+		/* ready/go are single-writer on BSP side; AP uses acquire loads. */
 		ap_ready[apic_id].store(0, std::memory_order_relaxed);
 		ap_go[apic_id].store(0, std::memory_order_relaxed);
 
@@ -253,6 +273,7 @@ namespace
 		mailbox->trampoline_phys = trampoline_phys;
 		mailbox->go_ptr = reinterpret_cast<uint64_t>(&ap_go[apic_id]);
 
+		/* SIPI vector is the page number; must be 4KiB aligned. */
 		const uint8_t startup_vector = static_cast<uint8_t>(trampoline_phys / page_size);
 		if ((trampoline_phys % page_size) != 0)
 		{
@@ -260,6 +281,7 @@ namespace
 			return false;
 		}
 
+		/* INIT deassert+SIPI timing is deliberately conservative here. */
 		kernel::arch::x86_64::apic::lapic::send_init_ipi_assert(apic_id);
 		kernel::time::sleep_ms(10);
 		kernel::arch::x86_64::apic::lapic::send_init_ipi_deassert(apic_id);

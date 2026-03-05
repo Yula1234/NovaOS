@@ -6,6 +6,7 @@ namespace
 {
 	bool erms_available() noexcept
 	{
+		/* Cache CPUID once; used by memcpy/memset to pick rep movsb/stosb fast path. */
 		static uint8_t cached = 0xFF;
 		if (cached != 0xFF)
 		{
@@ -32,6 +33,7 @@ extern "C"
 
 		if (erms_available())
 		{
+			/* ERMS makes rep movsb competitive across most sizes; DF must be clear. */
 			asm volatile(
 				"cld\n"
 				"rep movsb\n"
@@ -71,6 +73,7 @@ extern "C"
 		const uintptr_t da = reinterpret_cast<uintptr_t>(d);
 		const uintptr_t sa = reinterpret_cast<uintptr_t>(s);
 
+		/* If ranges don't overlap (or dst is before src), memcpy is safe. */
 		if (da < sa || da - sa >= n)
 		{
 			memcpy(dst, src, n);

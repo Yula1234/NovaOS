@@ -12,6 +12,7 @@ namespace
 {
 	constexpr uint64_t page_size = 4096;
 
+	/* VMAR arenas are fixed kernel VA windows reserved for specific subsystems. */
 	constexpr uint64_t mmio_base = 0xFFFFFD0000000000ull;
 	constexpr uint64_t mmio_limit = mmio_base + (1ull << 30);
 
@@ -37,11 +38,14 @@ namespace
 		RbNode node;
 		uint64_t base = 0;
 		uint64_t size = 0;
+		/* Augmented RB-tree field: max free size in this subtree for fast "first fit big enough" search. */
 		uint64_t max_size = 0;
 	};
 
 	struct UsedRange
 	{
+		/* Separate tree for used ranges enables O(log N) lookup/free with strict overlap checking. */
+		/* Overlaps are not "maybe ok"; they are how VM space becomes a haunted house of shit. */
 		RbNode node;
 		uint64_t base = 0;
 		uint64_t size = 0;

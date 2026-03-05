@@ -4,6 +4,7 @@
 
 namespace kernel::arch::x86_64::apic::lapic
 {
+	/* xAPIC mode only (MMIO registers). x2APIC is deliberately not enabled yet. */
 	bool available() noexcept;
 
 	void init(uint64_t lapic_phys) noexcept;
@@ -11,6 +12,7 @@ namespace kernel::arch::x86_64::apic::lapic
 
 	void eoi() noexcept;
 
+	/* In xAPIC mode the LAPIC ID lives in the top byte of the ID register. */
 	uint32_t id() noexcept;
 
 	void send_ipi(uint32_t dest_apic_id, uint8_t vector) noexcept;
@@ -23,6 +25,7 @@ namespace kernel::arch::x86_64::apic::lapic
 	void broadcast_init_ipi_assert(bool include_self) noexcept;
 	void broadcast_init_ipi_deassert(bool include_self) noexcept;
 	void broadcast_startup_ipi(uint8_t startup_vector, bool include_self) noexcept;
+	/* SIPI startup_vector is the 4KiB page number of the real-mode entry point. */
 
 	void set_ipi_handler(void (*handler)() noexcept) noexcept;
 

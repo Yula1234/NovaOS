@@ -6,6 +6,7 @@ namespace
 {
 	[[noreturn]] void halt() noexcept
 	{
+		/* Disable interrupts to avoid taking further faults/IRQs while panicking. */
 		for (;;)
 		{
 			asm volatile("cli");
@@ -18,6 +19,7 @@ namespace kernel
 {
 	[[noreturn]] void panic(const char* message) noexcept
 	{
+		/* Best-effort: logging can itself depend on subsystems that might be broken. */
 		kernel::log::write("panic: ");
 		kernel::log::write_line(message);
 

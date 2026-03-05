@@ -6,6 +6,7 @@ namespace kernel::arch::x86_64
 {
 	struct [[gnu::packed]] InterruptFrameView
 	{
+		/* The CPU always pushes RIP/CS/RFLAGS. */
 		uint64_t rip;
 		uint64_t cs;
 		uint64_t rflags;
@@ -13,6 +14,7 @@ namespace kernel::arch::x86_64
 
 	struct [[gnu::packed]] InterruptFrame
 	{
+		/* Full hardware frame when the interrupt/trap crosses privilege levels (adds RSP/SS). */
 		uint64_t rip;
 		uint64_t cs;
 		uint64_t rflags;
@@ -22,6 +24,7 @@ namespace kernel::arch::x86_64
 
 	struct [[gnu::packed]] InterruptContext
 	{
+		/* Saved by our assembly stubs, not by hardware. Keep in sync with isr stub prologue. */
 		uint64_t r15;
 		uint64_t r14;
 		uint64_t r13;
@@ -41,6 +44,7 @@ namespace kernel::arch::x86_64
 		uint64_t vector;
 		uint64_t error_code;
 
+		/* Hardware frame follows; RSP/SS may be absent depending on CPL change. */
 		uint64_t rip;
 		uint64_t cs;
 		uint64_t rflags;

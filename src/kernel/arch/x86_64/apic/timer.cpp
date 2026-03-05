@@ -18,6 +18,7 @@ namespace
 
 	constexpr uint8_t vector_timer = 0x30;
 
+	/* We key counters by APIC ID; it fits in 8 bits in xAPIC mode. */
 	std::atomic<uint64_t> tick_counter_per_cpu[256]{};
 	uint8_t bsp_apic_id = 0;
 	uint32_t active_hz = 0;
@@ -96,10 +97,12 @@ namespace kernel::arch::x86_64::apic::timer
 		constexpr uint32_t calib_ms = 100;
 		const uint64_t calib_ns = static_cast<uint64_t>(calib_ms) * 1000ull * 1000ull;
 
+		/* Start masked to avoid stray interrupts during calibration. */
 		calibrated_div = 0x3;
 		kernel::arch::x86_64::apic::lapic::write_timer_div(calibrated_div);
 		kernel::arch::x86_64::apic::lapic::write_lvt_timer(static_cast<uint32_t>(vector_timer) | lvt_masked);
 
+		/* Use HPET as a wall clock and count down from a known init value to derive LAPIC ticks. */
 		kernel::arch::x86_64::apic::lapic::write_timer_init(0xFFFFFFFFu);
 		const uint64_t hpet_start = kernel::time::hpet::ns_since_boot();
 		kernel::time::hpet::busy_wait_ns(calib_ns);

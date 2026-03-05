@@ -6,6 +6,11 @@ namespace kernel::lib
 {
 	inline uint64_t irq_save_disable() noexcept
 	{
+		/*
+		 * GS-based per-CPU ABI:
+		 *  - gs:32 -> irq_depth
+		 *  - gs:36 -> irq_prev_if
+		 */
 		uint32_t depth = 0;
 		asm volatile("mov %%gs:32, %0" : "=r"(depth) :: "memory");
 
@@ -111,12 +116,14 @@ namespace kernel::lib
 		}
 
 	private:
+		/* Keep the hot lock byte isolated to its own cache line. */
 		alignas(64) uint8_t locked_ = 0;
 		uint8_t padding_[63] = {};
 	};
 
 	struct alignas(64) McsNode
 	{
+		/* MCS nodes are per-waiter; one cache line avoids ping-pong between waiters. */
 		volatile uint8_t waiting = 1;
 		McsNode* next = nullptr;
 		uint8_t padding_[48] = {};

@@ -12,6 +12,7 @@ namespace kernel::lib
 		static_assert(std::is_integral_v<T>);
 		static_assert(std::is_unsigned_v<T>);
 
+		/* alignment must be a power of two. */
 		return value & static_cast<T>(~static_cast<T>(alignment - 1));
 	}
 
@@ -21,6 +22,7 @@ namespace kernel::lib
 		static_assert(std::is_integral_v<T>);
 		static_assert(std::is_unsigned_v<T>);
 
+		/* alignment must be a power of two. */
 		return align_down(static_cast<T>(value + static_cast<T>(alignment - 1)), alignment);
 	}
 }

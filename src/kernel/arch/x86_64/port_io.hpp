@@ -6,12 +6,14 @@ namespace kernel::arch::x86_64
 {
 	inline void io_wait() noexcept
 	{
+		/* Port 0x80 is historically unused; an OUT to it is a cheap way to serialize slow ISA I/O. */
 		asm volatile("outb %%al, $0x80" : : "a"(0));
 	}
 
 	inline uint8_t inb(uint16_t port) noexcept
 	{
 		uint8_t value;
+		/* "Nd" allows either an 8-bit immediate port or DX, matching the instruction encoding. */
 		asm volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
 		return value;
 	}

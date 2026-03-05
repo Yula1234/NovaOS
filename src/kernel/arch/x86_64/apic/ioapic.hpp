@@ -6,5 +6,6 @@ namespace kernel::arch::x86_64::apic::ioapic
 {
 	void init(uint64_t ioapic_phys, uint32_t gsi_base) noexcept;
 
+	/* gsi is the global system interrupt number (post-ISO), not the legacy ISA IRQ. */
 	void route_irq(uint32_t gsi, uint8_t vector, uint32_t dest_apic_id, uint16_t flags) noexcept;
 }

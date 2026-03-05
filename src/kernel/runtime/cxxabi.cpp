@@ -10,11 +10,13 @@ extern "C"
 {
 	int __cxa_atexit(void (*)(void*), void*, void*)
 	{
+		/* No userspace, no dynamic unload: destructors are not run on shutdown yet. */
 		return 0;
 	}
 
 	void __cxa_pure_virtual()
 	{
+		/* Calling a pure virtual function is a hard bug in kernel code. */
 		kernel::panic("pure virtual call");
 	}
 }
@@ -43,6 +45,10 @@ void* operator new[](size_t size)
 
 void* operator new(size_t size, std::align_val_t align)
 {
+	/*
+	 * Kernel heap may not provide arbitrary alignment.
+	 * We over-allocate and stash the raw pointer right before the aligned address.
+	 */
 	const size_t a = static_cast<size_t>(align);
 	if (a == 0 || (a & (a - 1)) != 0)
 	{
@@ -96,6 +102,7 @@ void operator delete(void* ptr, std::align_val_t) noexcept
 		return;
 	}
 
+	/* raw pointer is stored in the word immediately preceding the returned aligned address. */
 	auto** slot = reinterpret_cast<void**>(reinterpret_cast<uint64_t>(ptr) - sizeof(void*));
 	kernel::mm::heap::free(*slot);
 }

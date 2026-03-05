@@ -5,11 +5,13 @@
 
 namespace kernel::boot::multiboot2
 {
+	/* Multiboot2 magic passed in EAX by the bootloader. */
 	constexpr uint32_t bootloader_magic = 0x36D76289;
 
 	struct Info
 	{
 		uint32_t magic;
+		/* Physical address of the multiboot info structure. */
 		uint32_t mbi_address;
 	};
 
@@ -27,6 +29,7 @@ namespace kernel::boot::multiboot2
 
 	struct [[gnu::packed]] Tag
 	{
+		/* Firmware/bootloader-defined layout; must not be padded by the compiler. */
 		uint32_t type;
 		uint32_t size;
 	};
@@ -60,6 +63,7 @@ namespace kernel::boot::multiboot2
 	public:
 		explicit Reader(uint32_t mbi_address) noexcept;
 
+		/* Returns a pointer into the physmap-mapped MBI. Tags are 8-byte aligned as per spec. */
 		const Tag* find(TagType type) const noexcept;
 		const MemoryMapTag* memory_map() const noexcept;
 

@@ -5,10 +5,12 @@
 
 namespace
 {
+	/* x86-64 GS base MSRs. We use plain GS base (no SWAPGS yet), so KERNEL_GS_BASE stays zero. */
 	constexpr uint32_t msr_gs_base = 0xC0000101u;
 	constexpr uint32_t msr_kernel_gs_base = 0xC0000102u;
 	constexpr uint64_t per_cpu_struct_size = 64;
 
+	/* BSP gets a fixed, early storage block so cpu_local is usable before the heap is up. */
 	alignas(64) static uint8_t bsp_cpu_local_storage[per_cpu_struct_size];
 	constexpr uint32_t max_cpus = 256;
 
@@ -24,6 +26,7 @@ namespace
 
 	kernel::arch::x86_64::CpuLocalData* allocate_cpu_local(uint32_t cpu_id) noexcept
 	{
+		/* Per-CPU block is intentionally cacheline-sized and aligned; don't let the allocator pick odd alignments. */
 		void* mem = kernel::mm::heap::alloc(per_cpu_struct_size);
 		if (!mem)
 		{
@@ -47,6 +50,7 @@ namespace kernel::arch::x86_64::cpu_local
 {
 	void init_bsp() noexcept
 	{
+		/* BSP uses static storage; APs allocate their block from the heap once it is available. */
 		auto* data = reinterpret_cast<CpuLocalData*>(bsp_cpu_local_storage);
 		data->cpu_id = 0;
 		data->apic_id = 0;
@@ -62,6 +66,8 @@ namespace kernel::arch::x86_64::cpu_local
 
 	void init_ap(uint32_t apic_id) noexcept
 	{
+		/* Current code keeps a trivial mapping cpu_id == low 8 bits of APIC ID (xAPIC). */
+		/* If you ever support sparse APIC IDs or x2APIC, this will need a real allocator/map. */
 		const uint32_t cpu_id = apic_id & 0xFFu;
 
 		auto* data = allocate_cpu_local(cpu_id);

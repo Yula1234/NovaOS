@@ -9,6 +9,7 @@ extern "C" void* isr_stub_table[256];
 
 namespace
 {
+	/* 64-bit IDT interrupt gate descriptor (16 bytes). Layout is architectural. */
 	struct [[gnu::packed]] IdtEntry
 	{
 		uint16_t offset_0_15;
@@ -41,6 +42,7 @@ namespace
 		return e;
 	}
 
+	/* P=1, DPL=0, type=0xE (interrupt gate). */
 	constexpr uint8_t interrupt_gate = 0x8E;
 
 	void set_isr_ist(uint8_t vector, uint8_t ist) noexcept
@@ -63,10 +65,12 @@ namespace kernel::arch::x86_64::idt
 			set_isr(static_cast<uint8_t>(i));
 		}
 
+		/* IST slots are set up in the TSS; use them for exceptions that must have a known-good stack. */
 		set_isr_ist(14, 3);
 		set_isr_ist(8, 1);
 		set_isr_ist(2, 2);
 
+		/* Cache IDTR so later code can reload after per-CPU GDT/TSS changes. */
 		active_idtr.limit = static_cast<uint16_t>(sizeof(idt_table) - 1);
 		active_idtr.base = reinterpret_cast<uint64_t>(&idt_table[0]);
 

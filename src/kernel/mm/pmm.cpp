@@ -19,11 +19,17 @@ extern "C" uint8_t __kernel_phys_end;
 namespace
 {
 	constexpr uint64_t page_size = 4096;
+	/* Early boot only guarantees physmap up to this limit; later VMM expands it. */
 	constexpr uint64_t early_mapped_limit = 0x100000000ull;
 	constexpr uint32_t max_apic_id = 256;
 	constexpr uint32_t pcp_capacity = 64;
 	constexpr uint32_t null_page_index = ~0u;
 	constexpr uint64_t dma_limit_bytes = 16ull * 1024 * 1024;
+	/*
+	 * Split the normal zone into shards to reduce lock contention.
+	 * Sharding is a stopgap until a proper NUMA/zone model shows up.
+	 * Without it, some workloads turn the buddy locks into a crap-shaped bottleneck.
+	 */
 	constexpr uint32_t normal_zone_shards = 4;
 	constexpr uint32_t zone_count = 1 + normal_zone_shards;
 
@@ -31,6 +37,7 @@ namespace
 	uint64_t page_count = 0;
 	uint32_t max_order = 0;
 
+	/* Allocation hard-cap used by subsystems that must stay in low memory (SMP trampoline, etc.). */
 	std::atomic<uint64_t> alloc_limit_bytes{early_mapped_limit};
 	kernel::lib::McsLock pmm_lock;
 
@@ -48,6 +55,7 @@ namespace
 
 	struct alignas(64) PerCpuCache
 	{
+		/* A small per-CPU stash of pages to avoid grabbing the buddy locks on hot paths. */
 		std::atomic<uint32_t> count{0};
 		uint64_t pages[pcp_capacity];
 	};

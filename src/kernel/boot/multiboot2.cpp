@@ -9,6 +9,7 @@ namespace kernel::boot::multiboot2
 		: base_(reinterpret_cast<const uint8_t*>(kernel::mm::physmap::to_virt_const(mbi_address)))
 		, total_size_(0)
 	{
+		/* MBI lives in physical memory; physmap gives us a stable direct mapping for parsing. */
 		if (!base_)
 		{
 			return;
@@ -27,6 +28,7 @@ namespace kernel::boot::multiboot2
 		const uint8_t* const end = base_ + total_size_;
 		const uint8_t* p = base_ + 8;
 
+		/* Multiboot2 tags start at offset 8 and are rounded up to 8-byte alignment. */
 		while (p + sizeof(Tag) <= end)
 		{
 			const auto* tag = reinterpret_cast<const Tag*>(p);
@@ -99,6 +101,7 @@ namespace kernel::boot::multiboot2
 
 	uint64_t Reader::acpi_rsdp_phys() const noexcept
 	{
+		/* Prefer the ACPI v2+ tag when present; fall back to v1.0 tag otherwise. */
 		const auto* tag_new = find(TagType::AcpiNew);
 		const auto* tag_old = find(TagType::AcpiOld);
 		const auto* tag = tag_new ? tag_new : tag_old;

@@ -11,8 +11,10 @@ namespace kernel::mm::pmm
 	enum class PageFlags : uint8_t
 	{
 		None = 0,
+		/* Reserved pages are never handed out (kernel image, firmware regions, MMIO holes). */
 		Reserved = 1 << 0,
 		Allocated = 1 << 1,
+		/* Head of a buddy block; order is stored in metadata::order. */
 		BuddyHead = 1 << 2,
 		PcpCached = 1 << 3,
 	};
@@ -46,6 +48,7 @@ namespace kernel::mm::pmm
 
 	struct alignas(16) PageMetadata
 	{
+		/* Refcount is used by subsystems that pin pages (page tables, shared mappings, etc.). */
 		std::atomic<uint32_t> refcount{0};
 		uint8_t order{0};
 		std::atomic<uint8_t> flags{static_cast<uint8_t>(PageFlags::None)};
@@ -74,6 +77,7 @@ namespace kernel::mm::pmm
 	Stats stats() noexcept;
 
 	uint64_t alloc_limit() noexcept;
+	/* Hard cap for PMM allocations; used during early boot for low-memory constraints (SMP trampoline). */
 	void set_alloc_limit(uint64_t limit_bytes) noexcept;
 
 	uint64_t alloc_page() noexcept;

@@ -4,10 +4,12 @@
 
 namespace kernel::time
 {
+	/* Initializes time sources. Prefers HPET+calibrated LAPIC timer, falls back to PIT. */
 	void init(uint32_t tick_hz) noexcept;
 
 	namespace monotonic
 	{
+		/* True if we can provide a monotonic nanosecond clock (TSC calibrated or HPET). */
 		bool available() noexcept;
 		uint64_t now_ns() noexcept;
 		uint64_t now_ms() noexcept;

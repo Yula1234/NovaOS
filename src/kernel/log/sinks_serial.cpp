@@ -9,6 +9,7 @@ namespace kernel::log
 
 	void SerialSink::write(const char* s, size_t len) noexcept
 	{
+		/* Sink may be constructed before the serial device is fully ready; drop output in that case. */
 		if (!com1_)
 		{
 			return;

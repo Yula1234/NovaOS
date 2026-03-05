@@ -5,11 +5,18 @@
 namespace
 {
 	kernel::log::NullSink null_sink;
+	/*
+	 * active_sink is a raw pointer on purpose:
+	 *  - sinks are owned elsewhere (typically statically)
+	 *  - logging must work very early, before any allocator is ready.
+	 */
 	kernel::log::Sink* active_sink = &null_sink;
+	/* IRQ-safe lock: logs may be emitted from exception paths and from multiple CPUs. */
 	kernel::lib::McsLock log_lock;
 
 	void write_unlocked(const char* s, size_t len) noexcept
 	{
+		/* Caller must hold log_lock. */
 		if (!s || len == 0)
 		{
 			return;
@@ -73,6 +80,7 @@ namespace kernel::log
 			++len;
 		}
 
+		/* Single lock hold keeps a line intact across CPUs. */
 		kernel::lib::IrqMcsLockGuard guard(log_lock);
 		write_unlocked(s, len);
 		write_char_unlocked('\n');

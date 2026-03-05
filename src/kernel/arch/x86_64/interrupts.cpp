@@ -22,6 +22,7 @@ namespace kernel::arch::x86_64::interrupts
 
 	void eoi(uint8_t irq) noexcept
 	{
+		/* In APIC mode EOI is per-LAPIC and independent of legacy IRQ number. */
 		if (apic_active)
 		{
 			kernel::arch::x86_64::apic::lapic::eoi();

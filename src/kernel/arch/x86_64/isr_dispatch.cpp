@@ -39,6 +39,7 @@ namespace
 
 	kernel::arch::x86_64::InterruptFrameView frame_view(const kernel::arch::x86_64::InterruptContext* ctx) noexcept
 	{
+		/* Convert the full saved context into the small, always-present hardware frame view. */
 		kernel::arch::x86_64::InterruptFrameView f{};
 		f.rip = ctx ? ctx->rip : 0;
 		f.cs = ctx ? ctx->cs : 0;
@@ -49,6 +50,7 @@ namespace
 
 	void dispatch_irq(kernel::arch::x86_64::InterruptContext* ctx) noexcept
 	{
+		/* We use the classic remap: IRQ0..15 live at vectors 0x20..0x2F. */
 		const uint8_t irq = static_cast<uint8_t>(ctx->vector - 0x20);
 		auto f = frame_view(ctx);
 		kernel::arch::x86_64::irq::dispatch(irq, &f);
@@ -56,16 +58,19 @@ namespace
 
 	void dispatch_timer(kernel::arch::x86_64::InterruptContext*) noexcept
 	{
+		/* LAPIC timer handler is responsible for EOI. */
 		kernel::arch::x86_64::apic::lapic::handle_timer_vector();
 	}
 
 	void dispatch_ipi(kernel::arch::x86_64::InterruptContext*) noexcept
 	{
+		/* IPI handler is responsible for EOI. */
 		kernel::arch::x86_64::apic::lapic::handle_ipi_vector();
 	}
 
 	void dispatch_nmi(kernel::arch::x86_64::InterruptContext*) noexcept
 	{
+		/* NMI has no EOI; it is edge-like and not masked by IF. */
 		kernel::arch::x86_64::tlb::on_nmi();
 	}
 
@@ -110,6 +115,7 @@ namespace
 
 	void init_handlers() noexcept
 	{
+		/* Lazy init keeps early boot simple; the stub path can run before higher-level init. */
 		if (__atomic_load_n(&handlers_ready, __ATOMIC_ACQUIRE) != 0)
 		{
 			return;
@@ -138,6 +144,7 @@ namespace
 
 extern "C" void isr_dispatch(kernel::arch::x86_64::InterruptContext* ctx) noexcept
 {
+	/* The stub already did most of the ABI work; keep this function small and predictable. */
 	asm volatile("cld" ::: "cc");
 	init_handlers();
 

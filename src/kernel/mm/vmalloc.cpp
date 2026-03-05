@@ -13,6 +13,7 @@ namespace
 
 	bool map_anonymous_pages(uint64_t base, uint64_t pages) noexcept
 	{
+		/* Each virtual page gets a fresh PMM page; on failure we roll back both mappings and pages. */
 		for (uint64_t i = 0; i < pages; ++i)
 		{
 			const uint64_t v = base + i * page_size;
@@ -131,6 +132,7 @@ namespace kernel::mm::vmalloc
 		}
 
 		const uint64_t total = kernel::lib::align_up(size, page_size);
+		/* VMAR is the source of truth for vmalloc allocations; reject mismatched frees hard. */
 		void* recorded_base = nullptr;
 		uint64_t recorded_size = 0;
 		if (!kernel::mm::vmar::lookup(kernel::mm::vmar::Arena::Vmalloc, addr, recorded_base, recorded_size))

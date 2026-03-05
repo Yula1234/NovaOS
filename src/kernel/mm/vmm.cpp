@@ -11,6 +11,7 @@
 
 namespace
 {
+	/* Paging geometry for x86-64 canonical 4-level page tables. */
 	constexpr uint64_t page_size = 4096;
 	constexpr uint64_t large_page_size = 0x200000;
 	constexpr uint64_t huge_page_size = 0x40000000;
@@ -22,6 +23,7 @@ namespace
 	[[maybe_unused]] constexpr uint64_t bit_user = 1ull << 2;
 	constexpr uint64_t bit_ps = 1ull << 7;
 	constexpr uint64_t bit_nx = 1ull << 63;
+	/* Internal bookkeeping bit for page-table pages allocated by ensure_table(). */
 	constexpr uint64_t bit_owned = 1ull << 9;
 
 	constexpr uint64_t pml4_index(uint64_t v) noexcept
@@ -647,6 +649,11 @@ namespace kernel::mm::vmm
 
 	bool rollback_range_mappings(uint64_t virt, uint64_t phys, uint64_t size) noexcept
 	{
+		/*
+		 * Best-effort rollback.
+		 * If we can't clean up a half-mapped range, the kernel keeps the pieces and you'll be chasing
+		 * ghosts in the page tables at 3am.
+		 */
 		uint64_t v = virt;
 		uint64_t p = phys;
 		uint64_t remaining = size;
@@ -686,6 +693,12 @@ namespace kernel::mm::vmm
 		{
 			return true;
 		}
+
+		/*
+		 * map_range is intentionally all-or-nothing.
+		 * A partially mapped range is not an error, it's a future bug report.
+		 * Also: partial mappings are how you get subtle shit that reproduces once a week.
+		 */
 
 		uint64_t v = virt;
 		uint64_t p = phys;

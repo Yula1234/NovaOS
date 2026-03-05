@@ -12,8 +12,10 @@ namespace kernel::runtime
 {
 	void init_global_constructors() noexcept
 	{
+		/* Linker provides the init_array bounds; entries are plain function pointers. */
 		for (auto* fn = __init_array_start; fn != __init_array_end; ++fn)
 		{
+			/* Some toolchains may emit null slots; skip them. */
 			if (*fn)
 			{
 				(*fn)();

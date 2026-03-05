@@ -4,11 +4,13 @@
 
 namespace
 {
+	/* 8259 PIC I/O ports: command and data for master (PIC1) and slave (PIC2). */
 	constexpr uint16_t pic1_cmd = 0x20;
 	constexpr uint16_t pic1_data = 0x21;
 	constexpr uint16_t pic2_cmd = 0xA0;
 	constexpr uint16_t pic2_data = 0xA1;
 
+	/* Initialization control words. We run the classic ICW1..4 sequence in 8086 mode. */
 	constexpr uint8_t icw1_init = 0x10;
 	constexpr uint8_t icw1_icw4 = 0x01;
 	constexpr uint8_t icw4_8086 = 0x01;
@@ -20,6 +22,7 @@ namespace kernel::arch::x86_64::pic
 {
 	void remap(uint8_t master_offset, uint8_t slave_offset) noexcept
 	{
+		/* Preserve current masks; the remap sequence resets them. */
 		const uint8_t a1 = kernel::arch::x86_64::inb(pic1_data);
 		const uint8_t a2 = kernel::arch::x86_64::inb(pic2_data);
 
@@ -33,8 +36,10 @@ namespace kernel::arch::x86_64::pic
 		kernel::arch::x86_64::outb(pic2_data, slave_offset);
 		kernel::arch::x86_64::io_wait();
 
+		/* Tell master PIC that slave is wired to IRQ2 (bitmask 0b00000100). */
 		kernel::arch::x86_64::outb(pic1_data, 4);
 		kernel::arch::x86_64::io_wait();
+		/* Tell slave PIC its cascade identity (connected to master's IRQ2). */
 		kernel::arch::x86_64::outb(pic2_data, 2);
 		kernel::arch::x86_64::io_wait();
 
@@ -63,6 +68,7 @@ namespace kernel::arch::x86_64::pic
 
 	void eoi(uint8_t irq) noexcept
 	{
+		/* Cascaded setup: if the IRQ came from the slave, it must be acked first. */
 		if (irq >= 8)
 		{
 			kernel::arch::x86_64::outb(pic2_cmd, pic_eoi);

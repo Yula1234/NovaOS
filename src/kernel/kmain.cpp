@@ -31,16 +31,19 @@
 
 extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 {
+	/* Bring up the earliest possible console so panics have somewhere to go. */
 	kernel::console::vga::clear();
 
 	static kernel::serial::Com1 com1;
 	com1.init();
 
+	/* Sinks are static: logging must work without heap and without lifetime surprises. */
 	static kernel::log::SerialSink serial_sink(com1);
 	static kernel::log::VgaSink vga_sink;
 	static kernel::log::MultiSink multi_sink(serial_sink, vga_sink);
 	kernel::log::set_sink(multi_sink);
 
+	/* GDT/IDT must be installed before we enable interrupts or start taking faults. */
 	kernel::arch::x86_64::gdt::init_bsp();
 	kernel::arch::x86_64::cpu_local::init_bsp();
 	kernel::arch::x86_64::idt::init();
@@ -56,6 +59,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 
 	bool apic_ok = false;
 
+	/* Multiboot2 reader expects a valid MBI physical address; ignore if the magic doesn't match. */
 	if (multiboot_magic == kernel::boot::multiboot2::bootloader_magic)
 	{
 		kernel::boot::multiboot2::Reader reader(multiboot_info_addr);
@@ -86,6 +90,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 			kernel::log::write("\n", 1);
 		}
 
+		/* PMM must be initialized before we can safely allocate page tables or heap pages. */
 		kernel::mm::pmm::init(reader);
 		kernel::mm::vmm::init();
 		kernel::mm::vmm::map_physmap_all(reader);
@@ -93,6 +98,7 @@ extern "C" void kmain(unsigned multiboot_magic, unsigned multiboot_info_addr)
 		kernel::mm::ioremap::init();
 		kernel::mm::heap::init();
 		kernel::mm::vmar::init();
+		/* Global constructors may allocate and/or touch VMAR-backed facilities. */
 		kernel::runtime::init_global_constructors();
 
 		constexpr uint64_t test_virt = 0xFFFFFE0000100000ull;

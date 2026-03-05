@@ -8,6 +8,7 @@
 
 namespace
 {
+	/* ACPI tables are firmware-defined byte layouts; we must not rely on compiler padding. */
 	struct [[gnu::packed]] Rsdp
 	{
 		char signature[8];
@@ -130,6 +131,8 @@ namespace
 			return false;
 		}
 
+		/* ACPI requires the RSDP signature and an 8-bit checksum over the first 20 bytes. */
+
 		if (!(r->signature[0] == 'R' && r->signature[1] == 'S' && r->signature[2] == 'D' && r->signature[3] == ' ' &&
 			r->signature[4] == 'P' && r->signature[5] == 'T' && r->signature[6] == 'R' && r->signature[7] == ' '))
 		{
@@ -143,6 +146,7 @@ namespace
 
 		if (r->revision >= 2)
 		{
+			/* ACPI 2.0+ extends RSDP; extended checksum covers the full reported length. */
 			if (r->length < sizeof(Rsdp))
 			{
 				return false;
@@ -201,6 +205,7 @@ namespace kernel::acpi
 			return false;
 		}
 
+		/* We only consume XSDT here; RSDT (32-bit) is intentionally not supported. */
 		const uint64_t xsdt_phys = rsdp->revision >= 2 ? rsdp->xsdt_address : 0;
 		if (xsdt_phys == 0)
 		{
@@ -208,6 +213,7 @@ namespace kernel::acpi
 			return false;
 		}
 
+		/* SDT length lives in the header; map it first so we can map the full table safely. */
 		const auto* xsdt_hdr = static_cast<const SdtHeader*>(kernel::mm::memremap::map(xsdt_phys, sizeof(SdtHeader)));
 		if (!xsdt_hdr || xsdt_hdr->length < sizeof(SdtHeader))
 		{
@@ -268,6 +274,7 @@ namespace kernel::acpi
 			if (hpet_hdr && hpet_hdr->length >= sizeof(HpetTable))
 			{
 				const auto* hpet_tbl = static_cast<const HpetTable*>(kernel::mm::memremap::map(hpet_phys, hpet_hdr->length));
+				/* Only System Memory (address_space=0) is usable via normal MMIO mapping here. */
 				if (sdt_valid(&hpet_tbl->h) && hpet_tbl->base_address.address_space == 0)
 				{
 					hpet_info.hpet_phys = hpet_tbl->base_address.address;
@@ -310,6 +317,7 @@ namespace kernel::acpi
 		while (p + sizeof(MadtEntryHeader) <= end)
 		{
 			const auto* eh = reinterpret_cast<const MadtEntryHeader*>(p);
+			/* Firmware tables are untrusted; length checks must be strict to avoid walking off-table. */
 			if (eh->length < sizeof(MadtEntryHeader) || p + eh->length > end)
 			{
 				break;
@@ -343,6 +351,7 @@ namespace kernel::acpi
 			if (eh->type == static_cast<uint8_t>(MadtEntryType::InterruptSourceOverride) && eh->length >= sizeof(MadtIso))
 			{
 				const auto* iso = reinterpret_cast<const MadtIso*>(p);
+				/* ISA IRQ0 override (timer) is the one we care about early; others can be added later. */
 				if (iso->bus == 0 && iso->source_irq == 0)
 				{
 					irq0_gsi = iso->gsi;

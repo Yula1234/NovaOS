@@ -32,6 +32,7 @@ namespace kernel::mm::vmm
 	public:
 		AddressSpace() noexcept = default;
 
+		/* pml4_phys must point to a 4KiB PML4 page in physical memory. */
 		void reset(uint64_t pml4_phys) noexcept;
 
 		uint64_t pml4_phys() const noexcept;
@@ -44,6 +45,7 @@ namespace kernel::mm::vmm
 		void activate() const noexcept;
 
 	private:
+		/* Protected by lock_; map/unmap may be called concurrently on SMP. */
 		uint64_t pml4_phys_ = 0;
 		mutable kernel::lib::McsLock lock_;
 	};
@@ -51,6 +53,7 @@ namespace kernel::mm::vmm
 	void init() noexcept;
 	AddressSpace& kernel_space() noexcept;
 
+	/* Maps a contiguous phys range; on failure the function rolls back partial mappings. */
 	bool map_range(uint64_t virt, uint64_t phys, uint64_t size, PageFlags flags) noexcept;
 	void map_physmap_all(const kernel::boot::multiboot2::Reader& multiboot) noexcept;
 }

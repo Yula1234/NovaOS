@@ -54,6 +54,7 @@ namespace
 			return 0;
 		}
 
+		/* tsc_ns_mul_q32 approximates (1e9 / tsc_hz) in Q32 fixed-point. */
 		return mul_shift_right_32(tsc_delta, tsc_ns_mul_q32);
 	}
 
@@ -64,6 +65,7 @@ namespace
 			return false;
 		}
 
+		/* Long enough window to average out rdtsc/jitter; still small in boot terms. */
 		constexpr uint64_t calib_ns = 200ull * 1000ull * 1000ull;
 
 		const uint64_t start_ns = kernel::time::hpet::ns_since_boot();
@@ -115,6 +117,7 @@ namespace kernel::time
 
 		if (kernel::time::hpet::available())
 		{
+			/* Calibrate TSC first so monotonic clock can use cheap rdtsc fast path. */
 			calibrate_tsc_with_hpet();
 
 			if (kernel::arch::x86_64::apic::timer::init_calibrated(tick_hz))
@@ -186,12 +189,14 @@ namespace kernel::time
 				return;
 			}
 
+			/* If interrupts are enabled, HLT yields CPU until the next tick/IRQ. */
 			if (kernel::arch::x86_64::interrupts_enabled())
 			{
 				asm volatile("hlt");
 			}
 			else
 			{
+				/* Can't sleep with IF=0; just spin politely. */
 				asm volatile("pause");
 			}
 		}
